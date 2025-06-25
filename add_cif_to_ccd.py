@@ -89,9 +89,16 @@ def addCIFToCCD(resname, filename = None, boltz_path = Path().home() / '.boltz')
     with open(Path(boltz_path) / 'mols' / f'{resname}.pkl', 'wb') as f:
         pickle.dump(rwMol.GetMol(), f)
 
+def validate_name(name):
+    if len(name) < 1:
+        raise argparse.ArgumentTypeError("name may not be empty")
+    if len(name) > 5:
+        raise argparse.ArgumentTypeError("name must not exceed 5 characters")
+    return name
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-n", "--name", required=True, type=lambda v: v if v.isalpha() and len(v) > 0 and len(v) < 5 else False, help="Name of molecule can not exceed 5 characters")
+    parser.add_argument("-n", "--name", required=True, type=validate_name, help="Name of molecule can not exceed 5 characters")
     parser.add_argument("-i", "--input", help="CIF file containing molecule to add to boltz's CCD")
     parser.add_argument("-b", "--boltz_path", default=Path().home() / '.boltz', help="Path to boltz directory")
     args = parser.parse_args()
