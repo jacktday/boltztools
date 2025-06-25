@@ -33,6 +33,7 @@ def addCIFToCCD(resname, filename = None, boltz_path = Path().home() / '.boltz')
     atom_types = cif_component['_chem_comp_atom.type_symbol']
     atom_names = cif_component['_chem_comp_atom.atom_id']
     atom_charges = list(map(int, cif_component['_chem_comp_atom.charge']))
+    atom_leaving_flags = list(map(lambda flag: '1' if flag == 'Y' else '0', cif_component.get('_chem_comp_atom.pdbx_leaving_atom_flag', ['N'] * len(atom_names))))
     atom_positions = list(zip(
         map(float, cif_component['_chem_comp_atom.pdbx_model_Cartn_x_ideal']),
         map(float, cif_component['_chem_comp_atom.pdbx_model_Cartn_y_ideal']),
@@ -49,11 +50,12 @@ def addCIFToCCD(resname, filename = None, boltz_path = Path().home() / '.boltz')
 
     # Add Atoms
     atomMap = {}
-    for atom_type, atom_name, atom_charge in zip(
-        atom_types, atom_names, atom_charges
+    for atom_type, atom_name, atom_charge, atom_leaving_flag in zip(
+        atom_types, atom_names, atom_charges, atom_leaving_flags
     ):
         atom = rdkit.Chem.Atom(atom_type.capitalize() if atom_type != 'X' else '*')
         atom.SetProp('name', atom_name)
+        atom.SetProp('leaving_atom', atom_leaving_flag)
         atom.SetFormalCharge(atom_charge)
         residue_info = rdkit.Chem.AtomPDBResidueInfo()
         residue_info.SetName(atom_name.center(4))
