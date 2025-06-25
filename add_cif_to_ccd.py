@@ -40,6 +40,9 @@ def addCIFToCCD(resname, filename = None, boltz_path = Path().home() / '.boltz')
         map(float, cif_component['_chem_comp_atom.pdbx_model_Cartn_z_ideal']),
     ))
 
+    if len(atom_positions) == 0:
+        raise Exception("CIF must provide conformation in the form of atom positions!")
+
     # Get Bonds
     bond_begin_atoms = cif_component.get('_chem_comp_bond.atom_id_1', [])
     bond_end_atoms = cif_component.get('_chem_comp_bond.atom_id_2', [])
@@ -77,6 +80,7 @@ def addCIFToCCD(resname, filename = None, boltz_path = Path().home() / '.boltz')
         )
         rwMol.GetBondWithIdx(number_of_bonds - 1).SetIsAromatic(bond_aromatic_flag)
 
+    # Add conformation
     if len(atom_positions) > 0:
         conformer = rdkit.Chem.Conformer(len(atom_positions))
         conformer.SetPositions(np.array(atom_positions))
