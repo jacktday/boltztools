@@ -112,7 +112,7 @@ def addCIFToCCD(resname, filename = None, boltz_path = Path().home() / '.boltz')
 
     parsedResidue = parse_ccd_residue(resname, mol, 0)
 
-    addPickledProp(mol, 'symmetries', (tuple(range(mol.GetNumAtoms())),))
+    addPickledProp(mol, 'symmetries', mol.GetSubstructMatches(mol, uniquify=False))
     addPickledProp(mol, 'pb_edge_index', extractConstraints(parsedResidue.rdkit_bounds_constraints, 'atom_idxs', transpose=True))
     addPickledProp(mol, 'pb_lower_bounds', extractConstraints(parsedResidue.rdkit_bounds_constraints, 'lower_bound'))
     addPickledProp(mol, 'pb_upper_bounds', extractConstraints(parsedResidue.rdkit_bounds_constraints, 'upper_bound'))
