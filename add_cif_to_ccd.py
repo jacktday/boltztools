@@ -7,7 +7,7 @@ import meeko.chemtempgen
 import rdkit.Chem
 from CifFile import ReadCif
 import numpy as np
-import meeko
+from boltz.data.parse.mmcif_with_constraints import parse_ccd_residue
 
 def orderToBondType(order: str):
     bondType = {
@@ -16,6 +16,25 @@ def orderToBondType(order: str):
         'TRIP': rdkit.Chem.BondType.TRIPLE,
     }
     return bondType[order]
+
+def extractConstraints(constraints, key, transpose=False):
+    result = np.array(list(
+        map(
+            lambda obj: getattr(obj, key),
+            constraints
+        )
+    ))
+
+    if transpose:
+        return result.transpose()
+    
+    return result
+
+def addPickledProp(mol, name, value):
+    mol.SetProp(
+        name,
+        pickle.dumps(value).hex()
+    )
 
 def addCIFToCCD(resname, filename = None, boltz_path = Path().home() / '.boltz'):
     if filename == None:
@@ -86,12 +105,32 @@ def addCIFToCCD(resname, filename = None, boltz_path = Path().home() / '.boltz')
         conformer.SetPositions(np.array(atom_positions))
         rwMol.AddConformer(conformer)
 
-    rwMol.UpdatePropertyCache(strict=False)
-    rdkit.Chem.SanitizeMol(rwMol)
+    mol = rdkit.Chem.RemoveHs(rwMol.GetMol())
+    mol.UpdatePropertyCache(strict=False)
+    rdkit.Chem.SanitizeMol(mol)
+    rdkit.Chem.rdmolops.AssignStereochemistryFrom3D(mol)
+
+    parsedResidue = parse_ccd_residue("TRP", mol, 0)
+
+    addPickledProp(mol, 'symmetries', (tuple(range(mol.GetNumAtoms())),))
+    addPickledProp(mol, 'pb_edge_index', extractConstraints(parsedResidue.rdkit_bounds_constraints, 'atom_idxs', transpose=True))
+    addPickledProp(mol, 'pb_lower_bounds', extractConstraints(parsedResidue.rdkit_bounds_constraints, 'lower_bound'))
+    addPickledProp(mol, 'pb_upper_bounds', extractConstraints(parsedResidue.rdkit_bounds_constraints, 'upper_bound'))
+    addPickledProp(mol, 'pb_bond_mask', extractConstraints(parsedResidue.rdkit_bounds_constraints, 'is_bond'))
+    addPickledProp(mol, 'pb_angle_mask', extractConstraints(parsedResidue.rdkit_bounds_constraints, 'is_angle')) # FIXME: This doesn't match the ref
+    addPickledProp(mol, 'chiral_atom_index', extractConstraints(parsedResidue.chiral_atom_constraints, 'atom_idxs', transpose=True))
+    addPickledProp(mol, 'chiral_check_mask', extractConstraints(parsedResidue.chiral_atom_constraints, 'is_reference'))
+    addPickledProp(mol, 'chiral_atom_orientations', extractConstraints(parsedResidue.chiral_atom_constraints, 'is_r'))
+    addPickledProp(mol, 'stereo_bond_index', extractConstraints(parsedResidue.stereo_bond_constraints, 'atom_idxs', transpose=True))
+    addPickledProp(mol, 'stereo_check_mask', extractConstraints(parsedResidue.stereo_bond_constraints, 'is_check'))
+    addPickledProp(mol, 'stereo_bond_orientations', extractConstraints(parsedResidue.stereo_bond_constraints, 'is_e'))
+    addPickledProp(mol, 'aromatic_5_ring_index', extractConstraints(parsedResidue.planar_ring_5_constraints, 'atom_idxs', transpose=True))
+    addPickledProp(mol, 'aromatic_6_ring_index', extractConstraints(parsedResidue.planar_ring_6_constraints, 'atom_idxs', transpose=True))
+    addPickledProp(mol, 'planar_double_bond_index', extractConstraints(parsedResidue.planar_bond_constraints, 'atom_idxs', transpose=True))
 
     rdkit.Chem.SetDefaultPickleProperties(rdkit.Chem.PropertyPickleOptions.AllProps)
     with open(Path(boltz_path) / 'mols' / f'{resname}.pkl', 'wb') as f:
-        pickle.dump(rwMol.GetMol(), f)
+        pickle.dump(mol, f)
 
 def validate_name(name):
     if len(name) < 1:
