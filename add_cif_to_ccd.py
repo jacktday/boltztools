@@ -110,7 +110,7 @@ def addCIFToCCD(resname, filename = None, boltz_path = Path().home() / '.boltz')
     rdkit.Chem.SanitizeMol(mol)
     rdkit.Chem.rdmolops.AssignStereochemistryFrom3D(mol)
 
-    parsedResidue = parse_ccd_residue("TRP", mol, 0)
+    parsedResidue = parse_ccd_residue(resname, mol, 0)
 
     addPickledProp(mol, 'symmetries', (tuple(range(mol.GetNumAtoms())),))
     addPickledProp(mol, 'pb_edge_index', extractConstraints(parsedResidue.rdkit_bounds_constraints, 'atom_idxs', transpose=True))
