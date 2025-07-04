@@ -21,9 +21,9 @@ The `CustomResidueProcessor` class provides a complete pipeline to:
    pip install rdkit numpy
    ```
 
-2. Make sure your `chemtempgen.py` file is in the same directory or in your Python path.
+2. If Meeko is not installed as a package, make sure your `chemtempgen.py` file is in the same directory or in your Python path.
 
-3. Ensure the Boltz source code is available in the `src/` directory.
+3. If Boltz is not installed as a packagae, ensure the Boltz source code is available in the `src/` directory.
 
 ## Usage
 
@@ -31,16 +31,7 @@ The `CustomResidueProcessor` class provides a complete pipeline to:
 
 ```bash
 # Basic usage
-python custom_residue_processor.py --smiles "CC1=CC=CC=C1" --name "BEN" --output "ben_residue.pkl"
-
-# With custom backbone type
-python custom_residue_processor.py --smiles "C(C(C(=O)O)N)C" --name "ALA" --output "ala_residue.pkl" --backbone-type protein
-
-# With custom leaving atoms
-python custom_residue_processor.py --smiles "CC1=CC=CC=C1" --name "BEN" --output "ben_residue.pkl" --leaving-atoms C1 H1
-
-# Skip 3D conformer generation
-python custom_residue_processor.py --smiles "CC1=CC=CC=C1" --name "BEN" --output "ben_residue.pkl" --no-3d
+python custom_residue_processor.py --smiles "NC(CCOP(=O)(O)O)C(=O)O" --name SEP --output sep_residue.pkl --backbone-type protein --save-sdf
 ```
 
 ### Python API
@@ -78,14 +69,7 @@ parsed_residue = processor.process_custom_residue(
 - **Atom Names**: Sequential naming (C1, C2, O1, etc.)
 - **Leaving Atoms**: Must be specified manually
 
-## Leaving Atoms
-
-### Method 1: By Atom Names
-```python
-custom_leaving_atoms = {"N", "H1", "H2", "O", "H"}
-```
-
-### Method 2: By SMARTS Patterns (More Flexible)
+### 4. Custom Leaving Atoms By SMARTS Patterns 
 ```python
 custom_leaving_pattern = {
     "[NX3]([H])([H])[CX4][CX3](=O)[O]": {1, 6},  # Remove N-terminal H's and C-terminal O
@@ -93,154 +77,162 @@ custom_leaving_pattern = {
 }
 ```
 
+*Note: SMARTS pattern functionality is available but not demonstrated in the current examples due to complexity. This feature will be documented in future updates.*
+
 ## Examples
 
-### Example 1: Custom Phosphoserine
-```python
-smiles = "C(C(C(=O)O)N)OP(=O)(O)O"  # Phosphoserine-like
-resname = "SEP"
+The following examples demonstrate different use cases for the Custom Residue Processor. Each example generates both a `.pkl` file for Boltz use and an `.sdf` file for debugging and visualization.
 
+### Example 1: Custom Amino Acid with Protein Backbone
+
+**Purpose**: Process a phosphorylated amino acid with explicit protein backbone specification.
+
+**Molecule**: Phosphoserine-like residue
+- **SMILES**: `C(C(C(=O)O)N)OP(=O)(O)O`
+- **Residue Name**: `SEP`
+- **Backbone Type**: `protein` (explicitly specified)
+
+**Code**:
+```python
+processor = CustomResidueProcessor()
 parsed_residue = processor.process_custom_residue(
-    smiles=smiles,
-    resname=resname,
+    smiles="C(C(C(=O)O)N)OP(=O)(O)O",
+    resname="SEP",
     output_path="sep_residue.pkl",
-    backbone_type="protein"
+    backbone_type="protein",  # Explicitly specify protein backbone
+    generate_3d=True,
+    save_sdf=True  # Save SDF for debugging
 )
 ```
 
-### Example 2: Custom Nucleotide
-```python
-smiles = "C1=NC(=NC(=N1)N)C2C(C(C(O2)COP(=O)(O)O)O)O"  # Modified adenosine
-resname = "MAD"
+**Output Files**:
+- `sep_residue.pkl`: Boltz-compatible residue file
+- `sep_residue.sdf`: 3D structure for visualization
 
+**Key Features**:
+- Uses standard protein backbone atom naming (N, CA, C, O, CB)
+- Automatically removes N-terminal hydrogens and C-terminal oxygen
+- Generates 3D conformer with proper geometry constraints
+
+### Example 2: Custom Nucleotide with Nucleic Acid Backbone
+
+**Purpose**: Process a modified nucleotide with nucleic acid backbone.
+
+**Molecule**: AMP (Adenosine Monophosphate)
+- **SMILES**: `O=P(O)(O)OCC3OC(n2cnc1c(ncnc12)N)C(O)C3O`
+- **Residue Name**: `AMP`
+- **Backbone Type**: `nucleic_acid` (explicitly specified)
+
+**Code**:
+```python
+processor = CustomResidueProcessor()
 parsed_residue = processor.process_custom_residue(
-    smiles=smiles,
-    resname=resname,
-    output_path="mad_residue.pkl",
-    backbone_type="nucleic_acid"
+    smiles="O=P(O)(O)OCC3OC(n2cnc1c(ncnc12)N)C(O)C3O",
+    resname="AMP",
+    output_path="amp_residue.pkl",
+    backbone_type="nucleic_acid",  # Explicitly specify nucleic acid backbone
+    generate_3d=True,
+    save_sdf=True  # Save SDF for debugging
 )
 ```
 
-### Example 3: Custom Molecule with Custom Leaving Atoms
+**Output Files**:
+- `amp_residue.pkl`: Boltz-compatible residue file
+- `amp_residue.sdf`: 3D structure for visualization
+
+**Key Features**:
+- Uses standard nucleic acid backbone atom naming (P, O5', C5', etc.)
+- Removes 5' phosphate and 3' hydroxyl groups
+- Handles complex ring systems and heteroatoms
+
+### Example 3: Custom Molecule with Custom Backbone
+
+**Purpose**: Process a small organic molecule with custom backbone and specific leaving atoms.
+
+**Molecule**: Toluene (methylbenzene)
+- **SMILES**: `CC1=CC=CC=C1`
+- **Residue Name**: `BEN`
+- **Backbone Type**: `custom`
+- **Custom Leaving Atoms**: `{"C1", "H1"}` (methyl group and its hydrogen)
+
+**Code**:
 ```python
-smiles = "CC1=CC=CC=C1"  # Toluene
-resname = "BEN"
+processor = CustomResidueProcessor()
+custom_leaving_atoms = {"C1", "H1"}  # Remove methyl group and its H
 
 parsed_residue = processor.process_custom_residue(
-    smiles=smiles,
-    resname=resname,
+    smiles="CC1=CC=CC=C1",
+    resname="BEN",
     output_path="ben_residue.pkl",
-    backbone_type="custom",
-    custom_leaving_atoms={"C1", "H1"}  # Remove methyl group
+    backbone_type="custom",  # Custom backbone
+    custom_leaving_atoms=custom_leaving_atoms,
+    generate_3d=True,
+    save_sdf=True  # Save SDF for debugging
 )
 ```
 
-## Integration with Boltz
+**Output Files**:
+- `ben_residue.pkl`: Boltz-compatible residue file
+- `ben_residue.sdf`: 3D structure for visualization
 
-The generated pickle files can be used with Boltz in several ways:
+**Key Features**:
+- Uses sequential atom naming (C1, C2, C3, etc.)
+- Manually specifies which atoms to remove
+- Demonstrates custom backbone processing
 
-### 1. Direct Loading in Boltz Code
+### Example 4: Auto-Detection of Backbone Type
+
+**Purpose**: Let the processor automatically detect the backbone type based on molecular structure.
+
+**Molecule**: Alanine (standard amino acid)
+- **SMILES**: `C(C(C(=O)O)N)C`
+- **Residue Name**: `ALA`
+- **Backbone Type**: Auto-detected as `protein`
+
+**Code**:
 ```python
-import pickle
-
-# Load the processed residue
-with open("ala_residue.pkl", "rb") as f:
-    parsed_residue = pickle.load(f)
-
-# Use in Boltz pipeline
-# ... Boltz processing code ...
+processor = CustomResidueProcessor()
+parsed_residue = processor.process_custom_residue(
+    smiles="C(C(C(=O)O)N)C",
+    resname="ALA",
+    output_path="ala_residue.pkl",
+    # No backbone_type specified - will auto-detect
+    generate_3d=True,
+    save_sdf=True  # Save SDF for debugging
+)
 ```
 
-### 2. YAML Input with Custom Residues
-```yaml
-sequences:
-  - protein:
-      id: A
-      sequence: "MADQLTEEQIAEFKEAFSLF"
-      # The processed residue will be automatically recognized
-      # if it has standard backbone atom names
-```
+**Output Files**:
+- `ala_residue.pkl`: Boltz-compatible residue file
+- `ala_residue.sdf`: 3D structure for visualization
 
-## Key Features
+**Key Features**:
+- Automatic detection of protein backbone pattern
+- No manual specification required
+- Useful for batch processing of known molecule types
 
-### 1. **Modular Design**
-Each step is implemented as a separate function, making it easy to customize the pipeline.
+## Running the Examples
 
-### 2. **Automatic Backbone Detection**
-The processor can automatically detect protein and nucleic acid backbones using SMARTS patterns.
+To run all examples at once:
 
-### 3. **Flexible Leaving Atom Definition**
-Support for both name-based and pattern-based leaving atom specification.
-
-### 4. **3D Conformer Generation**
-Uses RDKit's ETKDG algorithm for reliable 3D conformer generation.
-
-### 5. **Boltz Compatibility**
-Outputs `ParsedResidue` objects that are directly compatible with Boltz's data structures.
-
-### 6. **Error Handling**
-Comprehensive error handling and logging throughout the pipeline.
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Invalid SMILES**: Ensure your SMILES string is valid and can be parsed by RDKit.
-
-2. **Backbone Detection Fails**: If auto-detection fails, explicitly specify the backbone type.
-
-3. **3D Conformer Generation Fails**: Some molecules may not generate 3D conformers. Use `--no-3d` to skip this step.
-
-4. **Leaving Atoms Not Found**: Ensure your leaving atom names or patterns match atoms in the molecule.
-
-### Debug Mode
-
-Enable debug logging to see detailed information:
 ```bash
-python custom_residue_processor.py --smiles "..." --name "..." --output "..." -v
+python example_usage.py
 ```
 
-### Validation
+This will generate the following files:
+- `sep_residue.pkl` and `sep_residue.sdf` (phosphoserine)
+- `amp_residue.pkl` and `amp_residue.sdf` (AMP)
+- `ben_residue.pkl` and `ben_residue.sdf` (toluene)
+- `ala_residue.pkl` and `ala_residue.sdf` (alanine)
 
-Check generated files:
-```bash
-# Load and validate pickle file
-python -c "
-import pickle
-with open('residue.pkl', 'rb') as f:
-    mol = pickle.load(f)
-print(f'Atoms: {mol.GetNumAtoms()}')
-print(f'Bonds: {mol.GetNumBonds()}')
-print(f'Conformers: {mol.GetNumConformers()}')
-"
-```
+## Debugging with SDF Files
 
-## Dependencies
+The generated SDF files can be opened in molecular viewers to verify:
+- **3D conformer quality**: Are the structures reasonable?
+- **Atom connectivity**: Are bonds correct?
+- **Leaving atom removal**: Were the right atoms removed?
+- **Backbone identification**: Are backbone atoms properly named?
 
-- **RDKit**: For molecular processing and 3D conformer generation
-- **NumPy**: For numerical operations
-- **Boltz**: For constraint generation (must be available in src/ directory)
-- **chemtempgen**: For chemical template generation (from meeko or local file)
-
-## File Structure
-
-This module works alongside the existing project structure:
-
-```
-project/
-├── add_cif_to_ccd.py              # Existing CIF processor
-├── custom_residue_processor.py    # New SMILES processor (this module)
-├── chemtempgen.py                 # Chemical template generator
-├── requirements.txt               # Python dependencies
-├── README.md                      # Main project documentation
-└── README_custom_residue_processor.md  # This documentation
-```
-
-## Contributing
-
-This module is designed to work alongside the existing project. When contributing:
-
-1. Maintain compatibility with existing tools
-2. Follow the established code style
-3. Test with both SMILES and CIF inputs
-4. Ensure Boltz integration works correctly 
+**Recommended viewers**:
+- PyMOL, VMD, Chimera (desktop applications)
+- MolView, PubChem 3D Viewer (online tools)

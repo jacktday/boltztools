@@ -148,44 +148,6 @@ def example_auto_detection():
         print(f"✗ Failed to process {resname}: {e}")
 
 
-def example_custom_leaving_pattern():
-    """Example: Use custom SMARTS patterns for leaving atoms."""
-    print("\n=== Example 5: Custom SMARTS Patterns for Leaving Atoms ===")
-    
-    processor = CustomResidueProcessor()
-    
-    # Example: Complex molecule with custom leaving pattern
-    smiles = "C(C(C(=O)O)N)C(C(=O)O)O"  # Aspartic acid
-    resname = "ASP"
-    
-    # Define custom leaving pattern using SMARTS
-    custom_leaving_pattern = {
-        "[NX3]([H])([H])[CX4][CX3](=O)[O]": {1, 6},  # Remove N-terminal H's and C-terminal O
-        "[CX3](=O)[O]": {1}  # Remove additional carboxyl O
-    }
-    
-    try:
-        parsed_residue = processor.process_custom_residue(
-            smiles=smiles,
-            resname=resname,
-            output_path="asp_residue.pkl",
-            backbone_type="protein",
-            custom_leaving_pattern=custom_leaving_pattern,
-            generate_3d=True,
-            save_sdf=True  # Save SDF for debugging
-        )
-        
-        print(f"✓ Successfully processed {resname}")
-        print(f"  - SMILES: {smiles}")
-        print(f"  - Backbone type: protein")
-        print(f"  - Custom leaving pattern: {custom_leaving_pattern}")
-        print(f"  - Atoms: {len(parsed_residue.atoms)}")
-        print(f"  - Bonds: {len(parsed_residue.bonds)}")
-        
-    except Exception as e:
-        print(f"✗ Failed to process {resname}: {e}")
-
-
 def main():
     """Run all examples."""
     print("Custom Residue Processor Examples")
@@ -196,17 +158,15 @@ def main():
     example_nucleic_acid_backbone()
     example_custom_backbone()
     example_auto_detection()
-    example_custom_leaving_pattern()
     
     print("\n" + "=" * 50)
     print("All examples completed!")
     print("Check the generated .pkl files for the processed residues.")
     print("SDF files have been generated for debugging purposes:")
     print("  - sep_residue.sdf (phosphoserine)")
-    print("  - mad_residue.sdf (modified adenosine)")
+    print("  - amp_residue.sdf (AMP)")
     print("  - ben_residue.sdf (toluene)")
     print("  - ala_residue.sdf (alanine)")
-    print("  - asp_residue.sdf (aspartic acid)")
     print("\nYou can open these SDF files in molecular viewers like:")
     print("  - PyMOL, VMD, Chimera, or online viewers")
     print("  - To verify 3D conformer generation and atom connectivity")
