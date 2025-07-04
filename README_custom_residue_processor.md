@@ -16,14 +16,11 @@ The `CustomResidueProcessor` class provides a complete pipeline to:
 
 ## Installation
 
-1. Ensure you have the required dependencies:
-   ```bash
-   pip install rdkit numpy
-   ```
+Installation of Meeko or Boltz is optional. But some dependencies are required: 
 
-2. If Meeko is not installed as a package, make sure your `chemtempgen.py` file is in the same directory or in your Python path.
+1. If Meeko is not installed as a package, make sure your `chemtempgen.py` file is in the same directory or in your Python path.
 
-3. If Boltz is not installed as a packagae, ensure the Boltz source code is available in the `src/` directory.
+2. If Boltz is not installed as a package, ensure the Boltz source code is available in the `src/` directory.
 
 ## Usage
 
