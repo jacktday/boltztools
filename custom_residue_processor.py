@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Dict, List, Set, Optional, Tuple, Any
 import logging
 import numpy as np
+import json
 
 # Try to import Boltz modules, fallback to src path if not installed
 try:
@@ -69,13 +70,126 @@ def extract_constraints(constraints, key, transpose=False):
     
     return result
 
-
-def add_pickled_prop(mol, name, value):
+def set_pickled_prop(mol, name, value):
     """Add a pickled property to an RDKit molecule."""
     mol.SetProp(
         name,
         pickle.dumps(value).hex()
     )
+
+def get_pickled_prop(mol, name):
+    """Get a pickled property from an RDKit molecule."""
+    return pickle.loads(
+        bytes.fromhex(mol.GetProp(name))
+    )
+
+def add_geometry_constraints(mol, resname=None):
+    # Use constraint-aware parsing to get geometry constraints
+    try:
+        # Ensure atoms have 'name' property for parse_ccd_residue
+        for atom in mol.GetAtoms():
+            if atom.HasProp('name'):
+                continue
+            atom.SetProp('name', get_atom_name(atom))
+        
+        # Ensure ring information is initialized for constraint computation
+        Chem.GetSymmSSSR(mol)
+        
+        parsed_residue_with_constraints = parse_ccd_residue(resname, mol, 0)
+        
+        # Add geometry constraint properties to the molecule
+        set_pickled_prop(mol, 'symmetries', mol.GetSubstructMatches(mol, uniquify=False))
+        
+        # Only add constraints if they exist
+        if hasattr(parsed_residue_with_constraints, 'rdkit_bounds_constraints') and parsed_residue_with_constraints.rdkit_bounds_constraints:
+            set_pickled_prop(mol, 'pb_edge_index', extract_constraints(parsed_residue_with_constraints.rdkit_bounds_constraints, 'atom_idxs', transpose=True))
+            set_pickled_prop(mol, 'pb_lower_bounds', extract_constraints(parsed_residue_with_constraints.rdkit_bounds_constraints, 'lower_bound'))
+            set_pickled_prop(mol, 'pb_upper_bounds', extract_constraints(parsed_residue_with_constraints.rdkit_bounds_constraints, 'upper_bound'))
+            set_pickled_prop(mol, 'pb_bond_mask', extract_constraints(parsed_residue_with_constraints.rdkit_bounds_constraints, 'is_bond'))
+            set_pickled_prop(mol, 'pb_angle_mask', extract_constraints(parsed_residue_with_constraints.rdkit_bounds_constraints, 'is_angle'))
+        
+        if hasattr(parsed_residue_with_constraints, 'chiral_atom_constraints') and parsed_residue_with_constraints.chiral_atom_constraints:
+            set_pickled_prop(mol, 'chiral_atom_index', extract_constraints(parsed_residue_with_constraints.chiral_atom_constraints, 'atom_idxs', transpose=True))
+            set_pickled_prop(mol, 'chiral_atom_is_r', extract_constraints(parsed_residue_with_constraints.chiral_atom_constraints, 'is_r'))
+            set_pickled_prop(mol, 'chiral_atom_is_reference', extract_constraints(parsed_residue_with_constraints.chiral_atom_constraints, 'is_reference'))
+        
+        if hasattr(parsed_residue_with_constraints, 'stereo_bond_constraints') and parsed_residue_with_constraints.stereo_bond_constraints:
+            set_pickled_prop(mol, 'stereo_bond_index', extract_constraints(parsed_residue_with_constraints.stereo_bond_constraints, 'atom_idxs', transpose=True))
+            set_pickled_prop(mol, 'stereo_bond_is_e', extract_constraints(parsed_residue_with_constraints.stereo_bond_constraints, 'is_e'))
+            set_pickled_prop(mol, 'stereo_bond_is_reference', extract_constraints(parsed_residue_with_constraints.stereo_bond_constraints, 'is_reference'))
+        
+        if hasattr(parsed_residue_with_constraints, 'planar_ring_5_constraints') and parsed_residue_with_constraints.planar_ring_5_constraints:
+            set_pickled_prop(mol, 'aromatic_5_ring_index', extract_constraints(parsed_residue_with_constraints.planar_ring_5_constraints, 'atom_idxs', transpose=True))
+        
+        if hasattr(parsed_residue_with_constraints, 'planar_ring_6_constraints') and parsed_residue_with_constraints.planar_ring_6_constraints:
+            set_pickled_prop(mol, 'aromatic_6_ring_index', extract_constraints(parsed_residue_with_constraints.planar_ring_6_constraints, 'atom_idxs', transpose=True))
+        
+        if hasattr(parsed_residue_with_constraints, 'planar_bond_constraints') and parsed_residue_with_constraints.planar_bond_constraints:
+            set_pickled_prop(mol, 'planar_double_bond_index', extract_constraints(parsed_residue_with_constraints.planar_bond_constraints, 'atom_idxs', transpose=True))
+        
+        logger.info(f"Successfully added geometry constraints for {resname}")
+        
+    except Exception as e:
+        logger.warning(f"Failed to add geometry constraints: {e}")
+        # Continue without geometry constraints
+        set_pickled_prop(mol, 'symmetries', mol.GetSubstructMatches(mol, uniquify=False))
+
+def get_smiles_with_atom_names(mol) -> Tuple[str, List[str]]:
+    """
+    Get SMILES with atom names in the order of SMILES output.
+    
+    Args:
+        mol: RDKit molecule
+        
+    Returns:
+        Tuple of (SMILES string, list of atom names)
+    """
+    
+    smiles_exh = Chem.MolToSmiles(mol, allHsExplicit=True)
+    smiles_output_order = json.loads(mol.GetProp('_smilesAtomOutputOrder'))
+    
+    # Create atom_id_dict with fallback for missing properties
+    atom_names = list(map(get_atom_name, mol.GetAtoms()))
+    
+    smiles_atom_names = [atom_names[atom_i] for atom_i in smiles_output_order]
+    
+    return smiles_exh, smiles_atom_names
+
+def print_mol_props(mol):
+    smiles, atom_names = get_smiles_with_atom_names(mol)
+    print(f"smiles: {smiles}")
+    print(f"atom_names: {smiles}")
+    
+    props = [
+        'symmetries',
+        'pb_edge_index',
+        'pb_lower_bounds',
+        'pb_upper_bounds',
+        'pb_bond_mask',
+        'pb_angle_mask',
+        'chiral_atom_index',
+        'chiral_atom_is_r',
+        'chiral_atom_is_reference',
+        'stereo_bond_index',
+        'stereo_bond_is_e',
+        'stereo_bond_is_reference',
+        'aromatic_5_ring_index',
+        'aromatic_6_ring_index',
+        'planar_double_bond_index',
+    ]
+    for prop in props:
+        if not mol.HasProp(prop):
+            continue
+        print(f"{prop}: {get_pickled_prop(mol, prop)}")
+    
+def get_atom_name(atom):
+    # Get atom name - try different property names
+    for prop_name in ['name', 'atom_id']:
+        if atom.HasProp(prop_name):
+            return atom.GetProp(prop_name)
+    
+    # If no property found, use atom symbol + index
+    return f"{atom.GetSymbol()}{atom.GetIdx()+1}"
 
 
 class CustomResidueProcessor:
@@ -87,7 +201,7 @@ class CustomResidueProcessor:
         """Initialize the processor with default settings."""
         self.backbone_patterns = {
             "protein": {
-                "smarts": "[NX3]([H])([H])[CX4][CX3](=O)[O]",
+                "smarts": "[NX3][CX4][CX3](=O)[O]",
                 "atom_names": ["N", "CA", "C", "O", "CB"],
                 "leaving_atoms": set(),  # Don't remove by atom names - too broad
                 "leaving_pattern": {"[NX3]([H])([H])[CX4][CX3](=O)[O]": {1, 6}}
@@ -102,7 +216,26 @@ class CustomResidueProcessor:
                 }
             }
         }
+
+    def get_backbone_atom_names(self, mol, backbone_type):
+        if not backbone_type:
+            return {}
+
+        if backbone_type not in self.backbone_patterns:
+            return {}
         
+        backbone = self.backbone_patterns[backbone_type]
+        indices = mol.GetSubstructMatch(Chem.MolFromSmarts(backbone["smarts"]))
+        return dict(zip(indices, backbone["atom_names"]))
+
+    def reassign_atom_names(self, mol, backbone_type=None):
+        """Ensure all atoms have 'atom_id' and 'name' properties set."""
+        atom_names = self.get_backbone_atom_names(mol, backbone_type)
+        for i, atom in enumerate(mol.GetAtoms()):
+            atom_name = atom_names.get(i, None)
+            if atom_name:
+                atom.SetProp('name', atom_name)
+            atom.SetProp('atom_id', f"{atom.GetSymbol()}{i+1}")
 
     
     def create_molecule_from_smiles(self, smiles: str, resname: str) -> ChemicalComponent:
@@ -135,11 +268,8 @@ class CustomResidueProcessor:
         smiles_exh = Chem.MolToSmiles(mol, allHsExplicit=True)
         
         # Generate atom names (simple sequential naming)
-        atom_names = []
-        for i, atom in enumerate(mol.GetAtoms()):
-            element = atom.GetSymbol()
-            atom_names.append(f"{element}{i+1}")
-            atom.SetProp('atom_id', f"{element}{i+1}")
+        self.reassign_atom_names(mol)
+        atom_names = list(map(get_atom_name, mol.GetAtoms()))
         
         return ChemicalComponent(mol, resname, smiles_exh, atom_names)
     
@@ -157,14 +287,9 @@ class CustomResidueProcessor:
         mol = cc.rdkit_mol
         
         # Check for protein backbone first (prioritize protein over nucleic acid)
-        protein_pattern = Chem.MolFromSmarts(self.backbone_patterns["protein"]["smarts"])
-        if mol.GetSubstructMatch(protein_pattern):
-            return "protein"
-        
-        # Check for nucleic acid backbone only if no protein backbone found
-        na_pattern = Chem.MolFromSmarts(self.backbone_patterns["nucleic_acid"]["smarts"])
-        if mol.GetSubstructMatch(na_pattern):
-            return "nucleic_acid"
+        for backbone_type, backbone_pattern in self.backbone_patterns.items():
+            if mol.GetSubstructMatch(Chem.MolFromSmarts(backbone_pattern["smarts"])):
+                return backbone_type
         
         return "custom"
     
@@ -189,69 +314,24 @@ class CustomResidueProcessor:
             logger.info("Custom backbone detected - keeping original atom names")
             return cc
         
-        # For nucleic acids, use generic backbone names
-        if backbone_type == "nucleic_acid":
-            # Use generic nucleic acid backbone names for all nucleotides
-            standard_names = self.backbone_patterns[backbone_type]["atom_names"]
-            logger.info(f"Using generic nucleic acid atom names for {cc.resname}")
-        elif backbone_type in self.backbone_patterns:
-            # For protein backbones, use standard names
-            standard_names = self.backbone_patterns[backbone_type]["atom_names"]
-        else:
+        if backbone_type not in self.backbone_patterns:
             logger.warning(f"No backbone pattern found for {backbone_type}")
             return cc
+
+        if backbone_type == "nucleic_acid":
+            logger.info(f"Using generic nucleic acid atom names for {cc.resname}")
         
         # Create a copy for modification
         rwmol = Chem.RWMol(mol)
         
         # Rename atoms to standard names
-        for i, atom in enumerate(rwmol.GetAtoms()):
-            if i < len(standard_names):
-                atom.SetProp('atom_id', standard_names[i])
-            else:
-                # For additional atoms beyond standard names, keep original symbol
-                atom.SetProp('atom_id', atom.GetSymbol())
+        self.reassign_atom_names(rwmol, backbone_type)
         
         # Update the ChemicalComponent
         cc.rdkit_mol = rwmol.GetMol()
-        cc.smiles_exh, cc.atom_name = self._get_smiles_with_atom_names(cc.rdkit_mol)
+        cc.smiles_exh, cc.atom_name = get_smiles_with_atom_names(cc.rdkit_mol)
         
         return cc
-    
-    def _get_smiles_with_atom_names(self, mol) -> Tuple[str, List[str]]:
-        """
-        Get SMILES with atom names in the order of SMILES output.
-        
-        Args:
-            mol: RDKit molecule
-            
-        Returns:
-            Tuple of (SMILES string, list of atom names)
-        """
-        
-        smiles_exh = Chem.MolToSmiles(mol, allHsExplicit=True)
-        smiles_atom_output_order = mol.GetProp('_smilesAtomOutputOrder')
-        
-        # Parse atom output order
-        delimiters = ('[', ']', ',')
-        for delimiter in delimiters:
-            smiles_atom_output_order = smiles_atom_output_order.replace(delimiter, ' ')
-        smiles_output_order = [int(x) for x in smiles_atom_output_order.split()]
-        
-        # Create atom_id_dict with fallback for missing properties
-        atom_id_dict = {}
-        for atom in mol.GetAtoms():
-            atom_idx = atom.GetIdx()
-            # Try to get atom_id property, fallback to atom symbol + index
-            try:
-                atom_name = atom.GetProp('atom_id')
-            except:
-                atom_name = f"{atom.GetSymbol()}{atom_idx+1}"
-            atom_id_dict[atom_idx] = atom_name
-        
-        atom_names = [atom_id_dict[atom_i] for atom_i in smiles_output_order]
-        
-        return smiles_exh, atom_names
     
     def define_leaving_atoms(self, cc: ChemicalComponent, backbone_type: str, 
                            custom_leaving_atoms: Optional[Set[str]] = None,
@@ -279,19 +359,13 @@ class CustomResidueProcessor:
         # Mark leaving atoms in the molecule
         mol = cc.rdkit_mol
         for atom in mol.GetAtoms():
-            atom_name = atom.GetProp('atom_id')
+            atom_name = get_atom_name(atom)
             if atom_name in leaving_atoms:
                 atom.SetProp('pdbx_leaving_atom_flag', 'Y')
             else:
                 atom.SetProp('pdbx_leaving_atom_flag', 'N')
         
         return cc
-    
-    def reassign_atom_names(self, mol):
-        """Ensure all atoms have 'atom_id' and 'name' properties set."""
-        for i, atom in enumerate(mol.GetAtoms()):
-            atom.SetProp('atom_id', f"{atom.GetSymbol()}{i+1}")
-            atom.SetProp('name', f"{atom.GetSymbol()}{i+1}")
 
     def truncate_residue(self, cc: ChemicalComponent, backbone_type: str,
                          custom_leaving_atoms: Optional[Set[str]] = None,
@@ -393,15 +467,11 @@ class CustomResidueProcessor:
         try:
             # Don't add hydrogens - keep implicit hydrogens at broken ends
             logger.info("Keeping implicit hydrogens at broken ends (no AddHs)")
-            # Reassign atom properties
-            self.reassign_atom_names(mol)
 
             logger.info("Sanitizing molecule...")
             try:
                 Chem.SanitizeMol(mol)
                 logger.info("Successfully sanitized molecule")
-                # Reassign atom properties after SanitizeMol
-                self.reassign_atom_names(mol)
             except Exception as e:
                 logger.error(f"Failed to sanitize molecule: {e}")
                 raise
@@ -420,8 +490,6 @@ class CustomResidueProcessor:
                 if conf_id < 0:
                     raise ValueError("Standard embedding failed")
                 logger.info(f"Successfully generated conformer with ID: {conf_id}")
-                # Reassign atom properties after EmbedMolecule
-                self.reassign_atom_names(mol)
             except Exception as e:
                 logger.error(f"Failed ETKDG conformer generation: {e}")
                 raise
@@ -439,7 +507,7 @@ class CustomResidueProcessor:
                     logger.warning(f"UFF optimization also failed: {e2}")
 
             cc.rdkit_mol = mol
-            cc.smiles_exh, cc.atom_name = self._get_smiles_with_atom_names(mol)
+            cc.smiles_exh, cc.atom_name = get_smiles_with_atom_names(mol)
             logger.info(f"Successfully generated 3D conformer for {cc.resname}")
             
         except Exception as e:
@@ -455,7 +523,7 @@ class CustomResidueProcessor:
                     raise ValueError("Alternative embedding failed")
                 AllChem.UFFOptimizeMolecule(mol)
                 cc.rdkit_mol = mol
-                cc.smiles_exh, cc.atom_name = self._get_smiles_with_atom_names(mol)
+                cc.smiles_exh, cc.atom_name = get_smiles_with_atom_names(mol)
                 logger.info(f"Generated 3D conformer with alternative method for {cc.resname}")
             except Exception as e2:
                 logger.error(f"All 3D conformer generation methods failed: {e2}")
@@ -469,7 +537,7 @@ class CustomResidueProcessor:
                     if conf_id >= 0:
                         logger.info(f"Generated basic 3D conformer for {cc.resname}")
                         cc.rdkit_mol = mol
-                        cc.smiles_exh, cc.atom_name = self._get_smiles_with_atom_names(mol)
+                        cc.smiles_exh, cc.atom_name = get_smiles_with_atom_names(mol)
                     else:
                         logger.error("All conformer generation methods failed")
                 except Exception as e3:
@@ -503,55 +571,8 @@ class CustomResidueProcessor:
             # Default to unknown token
             residue_type = token_ids.get("UNK", 0)
         
-        # Use constraint-aware parsing to get geometry constraints
-        try:
-            # Ensure atoms have 'name' property for parse_ccd_residue
-            for atom in mol.GetAtoms():
-                if atom.HasProp('atom_id') and not atom.HasProp('name'):
-                    atom.SetProp('name', atom.GetProp('atom_id'))
-            
-            # Ensure ring information is initialized for constraint computation
-            Chem.GetSymmSSSR(mol)
-            
-            parsed_residue_with_constraints = parse_ccd_residue(resname, mol, 0)
-            
-            # Add geometry constraint properties to the molecule
-            add_pickled_prop(mol, 'symmetries', mol.GetSubstructMatches(mol, uniquify=False))
-            
-            # Only add constraints if they exist
-            if hasattr(parsed_residue_with_constraints, 'rdkit_bounds_constraints') and parsed_residue_with_constraints.rdkit_bounds_constraints:
-                add_pickled_prop(mol, 'pb_edge_index', extract_constraints(parsed_residue_with_constraints.rdkit_bounds_constraints, 'atom_idxs', transpose=True))
-                add_pickled_prop(mol, 'pb_lower_bounds', extract_constraints(parsed_residue_with_constraints.rdkit_bounds_constraints, 'lower_bound'))
-                add_pickled_prop(mol, 'pb_upper_bounds', extract_constraints(parsed_residue_with_constraints.rdkit_bounds_constraints, 'upper_bound'))
-                add_pickled_prop(mol, 'pb_bond_mask', extract_constraints(parsed_residue_with_constraints.rdkit_bounds_constraints, 'is_bond'))
-                add_pickled_prop(mol, 'pb_angle_mask', extract_constraints(parsed_residue_with_constraints.rdkit_bounds_constraints, 'is_angle'))
-            
-            if hasattr(parsed_residue_with_constraints, 'chiral_atom_constraints') and parsed_residue_with_constraints.chiral_atom_constraints:
-                add_pickled_prop(mol, 'chiral_atom_index', extract_constraints(parsed_residue_with_constraints.chiral_atom_constraints, 'atom_idxs', transpose=True))
-                add_pickled_prop(mol, 'chiral_atom_is_r', extract_constraints(parsed_residue_with_constraints.chiral_atom_constraints, 'is_r'))
-                add_pickled_prop(mol, 'chiral_atom_is_reference', extract_constraints(parsed_residue_with_constraints.chiral_atom_constraints, 'is_reference'))
-            
-            if hasattr(parsed_residue_with_constraints, 'stereo_bond_constraints') and parsed_residue_with_constraints.stereo_bond_constraints:
-                add_pickled_prop(mol, 'stereo_bond_index', extract_constraints(parsed_residue_with_constraints.stereo_bond_constraints, 'atom_idxs', transpose=True))
-                add_pickled_prop(mol, 'stereo_bond_is_e', extract_constraints(parsed_residue_with_constraints.stereo_bond_constraints, 'is_e'))
-                add_pickled_prop(mol, 'stereo_bond_is_reference', extract_constraints(parsed_residue_with_constraints.stereo_bond_constraints, 'is_reference'))
-            
-            if hasattr(parsed_residue_with_constraints, 'planar_ring_5_constraints') and parsed_residue_with_constraints.planar_ring_5_constraints:
-                add_pickled_prop(mol, 'aromatic_5_ring_index', extract_constraints(parsed_residue_with_constraints.planar_ring_5_constraints, 'atom_idxs', transpose=True))
-            
-            if hasattr(parsed_residue_with_constraints, 'planar_ring_6_constraints') and parsed_residue_with_constraints.planar_ring_6_constraints:
-                add_pickled_prop(mol, 'aromatic_6_ring_index', extract_constraints(parsed_residue_with_constraints.planar_ring_6_constraints, 'atom_idxs', transpose=True))
-            
-            if hasattr(parsed_residue_with_constraints, 'planar_bond_constraints') and parsed_residue_with_constraints.planar_bond_constraints:
-                add_pickled_prop(mol, 'planar_double_bond_index', extract_constraints(parsed_residue_with_constraints.planar_bond_constraints, 'atom_idxs', transpose=True))
-            
-            logger.info(f"Successfully added geometry constraints for {resname}")
-            
-        except Exception as e:
-            logger.warning(f"Failed to add geometry constraints: {e}")
-            # Continue without geometry constraints
-            add_pickled_prop(mol, 'symmetries', mol.GetSubstructMatches(mol, uniquify=False))
-        
+        add_geometry_constraints(mol, resname)
+       
         # Create atoms list
         atoms = []
         try:
@@ -559,21 +580,9 @@ class CustomResidueProcessor:
             for i, atom in enumerate(mol.GetAtoms()):
                 pos = conf.GetAtomPosition(i)
                 
-                # Get atom name - try different property names
-                atom_name = None
-                for prop_name in ['atom_id', 'name', 'atom_id']:
-                    try:
-                        atom_name = atom.GetProp(prop_name)
-                        break
-                    except:
-                        continue
-                
-                # If no property found, use atom symbol + index
-                if atom_name is None:
-                    atom_name = f"{atom.GetSymbol()}{i+1}"
                 
                 parsed_atom = ParsedAtom(
-                    name=atom_name,
+                    name=get_atom_name(atom),
                     coords=(float(pos.x), float(pos.y), float(pos.z)),
                     is_present=True,
                     bfactor=0.0  # Default B-factor
@@ -583,21 +592,8 @@ class CustomResidueProcessor:
             logger.warning(f"Failed to get conformer coordinates: {e}")
             # Use default coordinates if conformer fails
             for i, atom in enumerate(mol.GetAtoms()):
-                # Get atom name - try different property names
-                atom_name = None
-                for prop_name in ['atom_id', 'name', 'atom_id']:
-                    try:
-                        atom_name = atom.GetProp(prop_name)
-                        break
-                    except:
-                        continue
-                
-                # If no property found, use atom symbol + index
-                if atom_name is None:
-                    atom_name = f"{atom.GetSymbol()}{i+1}"
-                
                 parsed_atom = ParsedAtom(
-                    name=atom_name,
+                    name=get_atom_name(atom),
                     coords=(0.0, 0.0, 0.0),  # Default coordinates
                     is_present=True,
                     bfactor=0.0  # Default B-factor
@@ -612,16 +608,13 @@ class CustomResidueProcessor:
             
             # Map bond types
             bond_type = bond.GetBondType()
-            if bond_type == Chem.BondType.SINGLE:
-                bond_type_id = 1
-            elif bond_type == Chem.BondType.DOUBLE:
-                bond_type_id = 2
-            elif bond_type == Chem.BondType.TRIPLE:
-                bond_type_id = 3
-            elif bond_type == Chem.BondType.AROMATIC:
-                bond_type_id = 4
-            else:
-                bond_type_id = 1  # Default to single bond
+            bond_type_map = {
+                Chem.BondType.SINGLE: 1,
+                Chem.BondType.DOUBLE: 2,
+                Chem.BondType.TRIPLE: 3,
+                Chem.BondType.AROMATIC: 4,
+            }
+            bond_type_id = bond_type_map.get(bond_type, 1) # Default to single bond
             
             parsed_bond = ParsedBond(
                 atom_1=begin_idx,
@@ -734,6 +727,8 @@ class CustomResidueProcessor:
         print(f"Final SMILES after processing: {cc.smiles_exh}")
         print(f"Number of atoms in final molecule: {cc.rdkit_mol.GetNumAtoms()}")
         
+        print_mol_props(cc.rdkit_mol)
+
         # Step 8: Save to pickle
         self.save_to_pickle(parsed_residue, cc.rdkit_mol, output_path)
         
@@ -747,12 +742,12 @@ class CustomResidueProcessor:
 def main():
     """Main function for command-line usage."""
     parser = argparse.ArgumentParser(description="Process custom residue from SMILES to Boltz format")
-    parser.add_argument("--smiles", required=True, help="SMILES string of the molecule")
-    parser.add_argument("--name", required=True, help="Residue name (3-letter code)")
-    parser.add_argument("--output", required=True, help="Output pickle file path")
-    parser.add_argument("--backbone-type", choices=["protein", "nucleic_acid", "custom"], 
+    parser.add_argument("-s", "--smiles", required=True, help="SMILES string of the molecule")
+    parser.add_argument("-n", "--name", required=True, help="Residue name (3-letter code)")
+    parser.add_argument("-o", "--output", required=True, help="Output pickle file path")
+    parser.add_argument("-b", "--backbone-type", choices=["protein", "nucleic_acid", "custom"], 
                        help="Backbone type (auto-detected if not specified)")
-    parser.add_argument("--leaving-atoms", nargs="+", help="Custom leaving atom names")
+    parser.add_argument("-l", "--leaving-atoms", nargs="+", help="Custom leaving atom names")
     parser.add_argument("--no-3d", action="store_true", help="Skip 3D conformer generation")
     parser.add_argument("--save-sdf", action="store_true", help="Save processed molecule as SDF file")
     
@@ -778,7 +773,7 @@ def main():
         
     except Exception as e:
         logger.error(f"Failed to process residue: {e}")
-        sys.exit(1)
+        raise e
 
 
 if __name__ == "__main__":
