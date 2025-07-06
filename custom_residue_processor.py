@@ -95,7 +95,7 @@ def add_geometry_constraints(mol, resname=None):
         # Ensure ring information is initialized for constraint computation
         Chem.GetSymmSSSR(mol)
         
-        parsed_residue_with_constraints = parse_ccd_residue(resname, mol, 0)
+        parsed_residue_with_constraints = parse_ccd_residue_with_constraints(resname, mol, 0)
         
         # Add geometry constraint properties to the molecule
         set_pickled_prop(mol, 'symmetries', mol.GetSubstructMatches(mol, uniquify=False))
@@ -258,8 +258,8 @@ class CustomResidueProcessor:
         mol = Chem.AddHs(mol)
         Chem.SanitizeMol(mol, sanitizeOps=Chem.SANITIZE_ALL ^ Chem.SANITIZE_KEKULIZE)
         
-        # Ensure explicit hydrogens are present
-        mol = Chem.AddHs(mol, addCoords=True)
+        # For protein backbones, we want to keep implicit hydrogens at the N and C termini
+        # This will be handled by the cleanup_hydrogens method later
         
         # Initialize ring information
         Chem.GetSymmSSSR(mol)
@@ -438,12 +438,53 @@ class CustomResidueProcessor:
         
         # After truncation, reassign atom names
         self.reassign_atom_names(cc.rdkit_mol)
+        
+        # Clean up hydrogens - ensure only one hydrogen on nitrogen atoms
+        cc.rdkit_mol = self.cleanup_hydrogens(cc.rdkit_mol)
+        
         return cc
     
     def check_atom_ids(self, mol, context=""):
         missing = [i for i, atom in enumerate(mol.GetAtoms()) if not atom.HasProp('atom_id')]
         if missing:
             logger.warning(f"Missing atom_id on atoms at indices {missing} {context}")
+
+    def cleanup_hydrogens(self, mol):
+        """
+        Clean up hydrogens to ensure proper connectivity for protein backbones.
+        For nitrogen atoms, keep only one hydrogen (for peptide bond formation).
+        This is a backup method in case the leaving pattern doesn't remove all extra hydrogens.
+        """
+        logger.info("Cleaning up hydrogens...")
+        
+        # Find nitrogen atoms with multiple hydrogens
+        atoms_to_remove = []
+        for atom in mol.GetAtoms():
+            if atom.GetSymbol() == 'N':
+                # Count hydrogens bonded to this nitrogen
+                hydrogen_neighbors = [n for n in atom.GetNeighbors() if n.GetSymbol() == 'H']
+                if len(hydrogen_neighbors) > 1:
+                    # Keep only the first hydrogen, remove the rest
+                    for h_atom in hydrogen_neighbors[1:]:
+                        atoms_to_remove.append(h_atom.GetIdx())
+                        logger.info(f"Marking hydrogen {h_atom.GetIdx()} on nitrogen {atom.GetIdx()} for removal")
+        
+        # Remove the extra hydrogens
+        if atoms_to_remove:
+            logger.info(f"Removing {len(atoms_to_remove)} extra hydrogens")
+            # Create a new molecule without the extra hydrogens
+            rwmol = Chem.RWMol(mol)
+            
+            # Remove atoms in reverse order to maintain indices
+            for idx in sorted(atoms_to_remove, reverse=True):
+                rwmol.RemoveAtom(idx)
+            
+            # Update the molecule
+            mol = rwmol.GetMol()
+            Chem.SanitizeMol(mol)
+            logger.info(f"After hydrogen cleanup: {mol.GetNumAtoms()} atoms")
+        
+        return mol
 
     def generate_3d_conformer(self, cc: ChemicalComponent) -> ChemicalComponent:
         mol = cc.rdkit_mol
