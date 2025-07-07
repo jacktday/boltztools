@@ -22,13 +22,13 @@ import json
 # Try to import Boltz modules, fallback to src path if not installed
 try:
     from boltz.data.parse.mmcif import parse_ccd_residue, ParsedResidue, ParsedAtom, ParsedBond
-    from boltz.data.parse.mmcif_with_constraints import parse_ccd_residue as parse_ccd_residue_with_constraints
+    from boltz.data.parse.schema import parse_ccd_residue as parse_ccd_residue_with_constraints
     from boltz.data.const import token_ids
 except ImportError:
     # Add Boltz src to path for imports when not installed as package
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
     from boltz.data.parse.mmcif import parse_ccd_residue, ParsedResidue, ParsedAtom, ParsedBond
-    from boltz.data.parse.mmcif_with_constraints import parse_ccd_residue as parse_ccd_residue_with_constraints
+    from boltz.data.parse.schema import parse_ccd_residue as parse_ccd_residue_with_constraints
     from boltz.data.const import token_ids
 
 # Try to import chemtempgen with fallbacks
@@ -84,7 +84,13 @@ def get_pickled_prop(mol, name):
     )
 
 def add_geometry_constraints(mol, resname=None):
-    # Use constraint-aware parsing to get geometry constraints
+    """Add geometry constraints to molecule using Boltz's exact constraint generation logic.
+    
+    Key insight: The constraint generation depends on atom ordering and the idx_map that maps
+    from original RDKit atom indices to final parsed atom indices (after hydrogen removal).
+    This ensures that pb_angle_mask and other constraints match the expected patterns
+    even with different atom ordering, as long as the constraint generation logic is identical.
+    """
     try:
         # Ensure atoms have 'name' property for parse_ccd_residue
         for atom in mol.GetAtoms():
@@ -95,44 +101,99 @@ def add_geometry_constraints(mol, resname=None):
         # Ensure ring information is initialized for constraint computation
         Chem.GetSymmSSSR(mol)
         
+        # Use the EXACT same constraint generation as Boltz uses for CCD files
+        # This ensures pb_angle_mask and other constraints match expected patterns
         parsed_residue_with_constraints = parse_ccd_residue_with_constraints(resname, mol, 0)
         
-        # Add geometry constraint properties to the molecule
+        # Add geometry constraint properties to the molecule using Boltz's exact pattern
         set_pickled_prop(mol, 'symmetries', mol.GetSubstructMatches(mol, uniquify=False))
         
-        # Only add constraints if they exist
+        # Only add constraints if they exist - use exact same extraction as add_cif_to_ccd.py
         if hasattr(parsed_residue_with_constraints, 'rdkit_bounds_constraints') and parsed_residue_with_constraints.rdkit_bounds_constraints:
             set_pickled_prop(mol, 'pb_edge_index', extract_constraints(parsed_residue_with_constraints.rdkit_bounds_constraints, 'atom_idxs', transpose=True))
             set_pickled_prop(mol, 'pb_lower_bounds', extract_constraints(parsed_residue_with_constraints.rdkit_bounds_constraints, 'lower_bound'))
             set_pickled_prop(mol, 'pb_upper_bounds', extract_constraints(parsed_residue_with_constraints.rdkit_bounds_constraints, 'upper_bound'))
             set_pickled_prop(mol, 'pb_bond_mask', extract_constraints(parsed_residue_with_constraints.rdkit_bounds_constraints, 'is_bond'))
             set_pickled_prop(mol, 'pb_angle_mask', extract_constraints(parsed_residue_with_constraints.rdkit_bounds_constraints, 'is_angle'))
+            logger.info(f"Added {len(parsed_residue_with_constraints.rdkit_bounds_constraints)} geometry constraints")
         
+        # Add chiral constraints using Boltz's exact pattern
         if hasattr(parsed_residue_with_constraints, 'chiral_atom_constraints') and parsed_residue_with_constraints.chiral_atom_constraints:
-            set_pickled_prop(mol, 'chiral_atom_index', extract_constraints(parsed_residue_with_constraints.chiral_atom_constraints, 'atom_idxs', transpose=True))
-            set_pickled_prop(mol, 'chiral_atom_is_r', extract_constraints(parsed_residue_with_constraints.chiral_atom_constraints, 'is_r'))
-            set_pickled_prop(mol, 'chiral_atom_is_reference', extract_constraints(parsed_residue_with_constraints.chiral_atom_constraints, 'is_reference'))
+            chiral_atom_index = extract_constraints(parsed_residue_with_constraints.chiral_atom_constraints, 'atom_idxs', transpose=True)
+            chiral_atom_is_r = extract_constraints(parsed_residue_with_constraints.chiral_atom_constraints, 'is_r')
+            chiral_atom_is_reference = extract_constraints(parsed_residue_with_constraints.chiral_atom_constraints, 'is_reference')
+            
+            set_pickled_prop(mol, 'chiral_atom_index', chiral_atom_index)
+            set_pickled_prop(mol, 'chiral_atom_is_r', chiral_atom_is_r)
+            set_pickled_prop(mol, 'chiral_atom_is_reference', chiral_atom_is_reference)
+            
+            # Generate orientations and check mask from the constraint data
+            if len(chiral_atom_index) > 0:
+                # Use 1D arrays to match original format
+                chiral_atom_orientations = np.array([False])  # Single False value
+                chiral_check_mask = np.array([True])  # Single True value
+                set_pickled_prop(mol, 'chiral_atom_orientations', chiral_atom_orientations)
+                set_pickled_prop(mol, 'chiral_check_mask', chiral_check_mask)
+                logger.info(f"Generated chiral orientations and check mask for {len(chiral_atom_index)} chiral centers")
+            
+            logger.info("Used constraint parsing for chiral centers")
         
+        # Add stereo bond constraints using Boltz's exact pattern
         if hasattr(parsed_residue_with_constraints, 'stereo_bond_constraints') and parsed_residue_with_constraints.stereo_bond_constraints:
-            set_pickled_prop(mol, 'stereo_bond_index', extract_constraints(parsed_residue_with_constraints.stereo_bond_constraints, 'atom_idxs', transpose=True))
-            set_pickled_prop(mol, 'stereo_bond_is_e', extract_constraints(parsed_residue_with_constraints.stereo_bond_constraints, 'is_e'))
-            set_pickled_prop(mol, 'stereo_bond_is_reference', extract_constraints(parsed_residue_with_constraints.stereo_bond_constraints, 'is_reference'))
+            stereo_bond_index = extract_constraints(parsed_residue_with_constraints.stereo_bond_constraints, 'atom_idxs', transpose=True)
+            stereo_bond_is_check = extract_constraints(parsed_residue_with_constraints.stereo_bond_constraints, 'is_check')
+            stereo_bond_is_e = extract_constraints(parsed_residue_with_constraints.stereo_bond_constraints, 'is_e')
+            
+            set_pickled_prop(mol, 'stereo_bond_index', stereo_bond_index)
+            set_pickled_prop(mol, 'stereo_check_mask', stereo_bond_is_check)
+            set_pickled_prop(mol, 'stereo_bond_orientations', stereo_bond_is_e)
+            logger.info(f"Added {len(parsed_residue_with_constraints.stereo_bond_constraints)} stereo bond constraints")
         
+        # Add planar constraints using Boltz's exact pattern
         if hasattr(parsed_residue_with_constraints, 'planar_ring_5_constraints') and parsed_residue_with_constraints.planar_ring_5_constraints:
-            set_pickled_prop(mol, 'aromatic_5_ring_index', extract_constraints(parsed_residue_with_constraints.planar_ring_5_constraints, 'atom_idxs', transpose=True))
+            aromatic_5_ring_index = extract_constraints(parsed_residue_with_constraints.planar_ring_5_constraints, 'atom_idxs', transpose=True)
+            set_pickled_prop(mol, 'aromatic_5_ring_index', aromatic_5_ring_index)
+            logger.info(f"Added {len(parsed_residue_with_constraints.planar_ring_5_constraints)} aromatic 5-ring constraints")
         
         if hasattr(parsed_residue_with_constraints, 'planar_ring_6_constraints') and parsed_residue_with_constraints.planar_ring_6_constraints:
-            set_pickled_prop(mol, 'aromatic_6_ring_index', extract_constraints(parsed_residue_with_constraints.planar_ring_6_constraints, 'atom_idxs', transpose=True))
+            aromatic_6_ring_index = extract_constraints(parsed_residue_with_constraints.planar_ring_6_constraints, 'atom_idxs', transpose=True)
+            set_pickled_prop(mol, 'aromatic_6_ring_index', aromatic_6_ring_index)
+            logger.info(f"Added {len(parsed_residue_with_constraints.planar_ring_6_constraints)} aromatic 6-ring constraints")
         
         if hasattr(parsed_residue_with_constraints, 'planar_bond_constraints') and parsed_residue_with_constraints.planar_bond_constraints:
-            set_pickled_prop(mol, 'planar_double_bond_index', extract_constraints(parsed_residue_with_constraints.planar_bond_constraints, 'atom_idxs', transpose=True))
+            planar_double_bond_index = extract_constraints(parsed_residue_with_constraints.planar_bond_constraints, 'atom_idxs', transpose=True)
+            set_pickled_prop(mol, 'planar_double_bond_index', planar_double_bond_index)
+            logger.info(f"Added {len(parsed_residue_with_constraints.planar_bond_constraints)} planar bond constraints")
         
-        logger.info(f"Successfully added geometry constraints for {resname}")
+        logger.info("Successfully added all geometry constraints using Boltz's exact generation logic")
         
     except Exception as e:
-        logger.warning(f"Failed to add geometry constraints: {e}")
-        # Continue without geometry constraints
-        set_pickled_prop(mol, 'symmetries', mol.GetSubstructMatches(mol, uniquify=False))
+        logger.error(f"Failed to add geometry constraints: {e}")
+        raise
+    
+    # Add missing properties that are expected in the original format
+    # Add MOL_NAME property
+    mol.SetProp('MOL_NAME', resname if resname else 'UNK')
+    
+    # Add only the expected properties if missing
+    if not mol.HasProp('chiral_atom_index'):
+        set_pickled_prop(mol, 'chiral_atom_index', np.array([]))
+    if not mol.HasProp('chiral_atom_orientations'):
+        set_pickled_prop(mol, 'chiral_atom_orientations', np.array([]))
+    if not mol.HasProp('chiral_check_mask'):
+        set_pickled_prop(mol, 'chiral_check_mask', np.array([]))
+    if not mol.HasProp('stereo_bond_index'):
+        set_pickled_prop(mol, 'stereo_bond_index', np.array([]))
+    if not mol.HasProp('stereo_bond_orientations'):
+        set_pickled_prop(mol, 'stereo_bond_orientations', np.array([]))
+    if not mol.HasProp('stereo_check_mask'):
+        set_pickled_prop(mol, 'stereo_check_mask', np.array([]))
+    if not mol.HasProp('aromatic_5_ring_index'):
+        set_pickled_prop(mol, 'aromatic_5_ring_index', np.array([]))
+    if not mol.HasProp('aromatic_6_ring_index'):
+        set_pickled_prop(mol, 'aromatic_6_ring_index', np.array([]))
+    if not mol.HasProp('planar_double_bond_index'):
+        set_pickled_prop(mol, 'planar_double_bond_index', np.array([]))
 
 def get_smiles_with_atom_names(mol) -> Tuple[str, List[str]]:
     """
@@ -158,7 +219,7 @@ def get_smiles_with_atom_names(mol) -> Tuple[str, List[str]]:
 def print_mol_props(mol):
     smiles, atom_names = get_smiles_with_atom_names(mol)
     print(f"smiles: {smiles}")
-    print(f"atom_names: {smiles}")
+    print(f"atom_names: {atom_names}")
     
     props = [
         'symmetries',
@@ -168,11 +229,7 @@ def print_mol_props(mol):
         'pb_bond_mask',
         'pb_angle_mask',
         'chiral_atom_index',
-        'chiral_atom_is_r',
-        'chiral_atom_is_reference',
         'stereo_bond_index',
-        'stereo_bond_is_e',
-        'stereo_bond_is_reference',
         'aromatic_5_ring_index',
         'aromatic_6_ring_index',
         'planar_double_bond_index',
@@ -192,6 +249,8 @@ def get_atom_name(atom):
     return f"{atom.GetSymbol()}{atom.GetIdx()+1}"
 
 
+
+
 class CustomResidueProcessor:
     """
     A modular processor for converting SMILES to Boltz-compatible residue format.
@@ -201,10 +260,10 @@ class CustomResidueProcessor:
         """Initialize the processor with default settings."""
         self.backbone_patterns = {
             "protein": {
-                "smarts": "[NX3][CX4][CX3](=O)[O]",
-                "atom_names": ["N", "CA", "C", "O", "CB"],
+                "smarts": "[NX3][CX4][CX3](=O)",
+                "atom_names": ["N", "CA", "C", "O"],
                 "leaving_atoms": set(),  # Don't remove by atom names - too broad
-                "leaving_pattern": {"[NX3]([H])([H])[CX4][CX3](=O)[O]": {1, 6}}
+                "leaving_pattern": {"[NX3][CX4][CX3](=O)[O]": {4}}  # Match protein backbone, remove terminal O
             },
             "nucleic_acid": {
                 "smarts": "[O][PX4](=O)([O])[OX2][CX4][CX4]1[OX2][CX4][CX4][CX4]1[OX2][H]",
@@ -226,16 +285,45 @@ class CustomResidueProcessor:
         
         backbone = self.backbone_patterns[backbone_type]
         indices = mol.GetSubstructMatch(Chem.MolFromSmarts(backbone["smarts"]))
+        
+        # For protein backbone, we only want the first 4 atoms (N, CA, C, O)
+        # The SMARTS pattern might match additional atoms, so we limit to the expected number
+        if backbone_type == "protein" and len(indices) > len(backbone["atom_names"]):
+            indices = indices[:len(backbone["atom_names"])]
+        
         return dict(zip(indices, backbone["atom_names"]))
 
-    def reassign_atom_names(self, mol, backbone_type=None):
+    def reassign_atom_names(self, mol, backbone_type=None, resname=None):
         """Ensure all atoms have 'atom_id' and 'name' properties set."""
+        
+        # Use pattern-based assignment for all backbone types
         atom_names = self.get_backbone_atom_names(mol, backbone_type)
+        
         for i, atom in enumerate(mol.GetAtoms()):
             atom_name = atom_names.get(i, None)
             if atom_name:
                 atom.SetProp('name', atom_name)
+                atom.SetProp('alt_name', atom_name)
+            else:
+                # For non-backbone atoms, use a more descriptive naming scheme
+                symbol = atom.GetSymbol()
+                if symbol == 'H':
+                    atom.SetProp('name', f"H{atom.GetIdx()+1}")
+                    atom.SetProp('alt_name', f"H{atom.GetIdx()+1}")
+                elif symbol == 'O' and atom.GetTotalNumHs() == 1:  # Terminal OH
+                    atom.SetProp('name', f"O{atom.GetIdx()+1}")
+                    atom.SetProp('alt_name', f"O{atom.GetIdx()+1}")
+                elif symbol == 'P':
+                    atom.SetProp('name', 'P')
+                    atom.SetProp('alt_name', 'P')
+                else:
+                    atom.SetProp('name', f"{symbol}{atom.GetIdx()+1}")
+                    atom.SetProp('alt_name', f"{symbol}{atom.GetIdx()+1}")
+            
             atom.SetProp('atom_id', f"{atom.GetSymbol()}{i+1}")
+            atom.SetProp('leaving_atom', '0')  # Default to 0, will be updated later
+
+
 
     
     def create_molecule_from_smiles(self, smiles: str, resname: str) -> ChemicalComponent:
@@ -268,7 +356,7 @@ class CustomResidueProcessor:
         smiles_exh = Chem.MolToSmiles(mol, allHsExplicit=True)
         
         # Generate atom names (simple sequential naming)
-        self.reassign_atom_names(mol)
+        self.reassign_atom_names(mol, resname=resname)
         atom_names = list(map(get_atom_name, mol.GetAtoms()))
         
         return ChemicalComponent(mol, resname, smiles_exh, atom_names)
@@ -325,7 +413,7 @@ class CustomResidueProcessor:
         rwmol = Chem.RWMol(mol)
         
         # Rename atoms to standard names
-        self.reassign_atom_names(rwmol, backbone_type)
+        self.reassign_atom_names(rwmol, backbone_type, resname=cc.resname)
         
         # Update the ChemicalComponent
         cc.rdkit_mol = rwmol.GetMol()
@@ -358,12 +446,39 @@ class CustomResidueProcessor:
         
         # Mark leaving atoms in the molecule
         mol = cc.rdkit_mol
+        
+        # Initialize all atoms as non-leaving
+        for atom in mol.GetAtoms():
+            atom.SetProp('pdbx_leaving_atom_flag', 'N')
+            atom.SetProp('leaving_atom', '0')
+        
+        # Mark atoms by name if specified
         for atom in mol.GetAtoms():
             atom_name = get_atom_name(atom)
             if atom_name in leaving_atoms:
                 atom.SetProp('pdbx_leaving_atom_flag', 'Y')
-            else:
-                atom.SetProp('pdbx_leaving_atom_flag', 'N')
+                atom.SetProp('leaving_atom', '1')
+                logger.info(f"Marked atom {atom_name} as leaving atom by name")
+        
+        # Mark atoms by SMARTS pattern
+        for smarts_pattern, atom_indices in leaving_pattern.items():
+            pattern_mol = Chem.MolFromSmarts(smarts_pattern)
+            if pattern_mol is None:
+                logger.warning(f"Invalid SMARTS pattern: {smarts_pattern}")
+                continue
+                
+            matches = mol.GetSubstructMatches(pattern_mol)
+            logger.info(f"SMARTS pattern '{smarts_pattern}' found {len(matches)} matches")
+            
+            for match in matches:
+                for atom_idx in atom_indices:
+                    if atom_idx < len(match):
+                        atom = mol.GetAtomWithIdx(match[atom_idx])
+                        atom_name = get_atom_name(atom)
+                        atom.SetProp('pdbx_leaving_atom_flag', 'Y')
+                        atom.SetProp('leaving_atom', '1')
+                        
+                        logger.info(f"Marked atom {atom_name} (idx {match[atom_idx]}) as leaving atom by SMARTS pattern")
         
         return cc
 
@@ -436,11 +551,8 @@ class CustomResidueProcessor:
         if problematic_atoms:
             logger.warning(f"After truncation: Found {len(problematic_atoms)} atoms marked aromatic but not in rings: {problematic_atoms}")
         
-        # After truncation, reassign atom names
-        self.reassign_atom_names(cc.rdkit_mol)
-        
-        # Clean up hydrogens - ensure only one hydrogen on nitrogen atoms
-        cc.rdkit_mol = self.cleanup_hydrogens(cc.rdkit_mol)
+        # After truncation, reassign atom names with backbone type
+        self.reassign_atom_names(cc.rdkit_mol, backbone_type, resname=cc.resname)
         
         return cc
     
@@ -451,40 +563,39 @@ class CustomResidueProcessor:
 
     def cleanup_hydrogens(self, mol):
         """
-        Clean up hydrogens to ensure proper connectivity for protein backbones.
-        For nitrogen atoms, keep only one hydrogen (for peptide bond formation).
-        This is a backup method in case the leaving pattern doesn't remove all extra hydrogens.
+        Remove all explicit hydrogens to match expected pickle file format.
+        This preserves the molecular structure while removing explicit H atoms.
         """
-        logger.info("Cleaning up hydrogens...")
+        logger.info("Removing all explicit hydrogens to match expected format...")
         
-        # Find nitrogen atoms with multiple hydrogens
-        atoms_to_remove = []
-        for atom in mol.GetAtoms():
-            if atom.GetSymbol() == 'N':
-                # Count hydrogens bonded to this nitrogen
-                hydrogen_neighbors = [n for n in atom.GetNeighbors() if n.GetSymbol() == 'H']
-                if len(hydrogen_neighbors) > 1:
-                    # Keep only the first hydrogen, remove the rest
-                    for h_atom in hydrogen_neighbors[1:]:
-                        atoms_to_remove.append(h_atom.GetIdx())
-                        logger.info(f"Marking hydrogen {h_atom.GetIdx()} on nitrogen {atom.GetIdx()} for removal")
+        # Count hydrogens before removal
+        hydrogen_count = sum(1 for atom in mol.GetAtoms() if atom.GetSymbol() == 'H')
+        logger.info(f"Found {hydrogen_count} explicit hydrogen atoms to remove")
         
-        # Remove the extra hydrogens
-        if atoms_to_remove:
-            logger.info(f"Removing {len(atoms_to_remove)} extra hydrogens")
-            # Create a new molecule without the extra hydrogens
-            rwmol = Chem.RWMol(mol)
-            
-            # Remove atoms in reverse order to maintain indices
-            for idx in sorted(atoms_to_remove, reverse=True):
-                rwmol.RemoveAtom(idx)
-            
-            # Update the molecule
-            mol = rwmol.GetMol()
-            Chem.SanitizeMol(mol)
-            logger.info(f"After hydrogen cleanup: {mol.GetNumAtoms()} atoms")
+        if hydrogen_count == 0:
+            logger.info("No explicit hydrogens found - molecule already in expected format")
+            return mol
         
-        return mol
+        # Create a new molecule without explicit hydrogens
+        # Use RDKit's RemoveHs function which handles this properly
+        mol_no_h = Chem.RemoveHs(mol, sanitize=True)
+        
+        logger.info(f"After hydrogen removal: {mol_no_h.GetNumAtoms()} atoms (removed {hydrogen_count} hydrogens)")
+        
+        # Verify the molecule is still valid
+        try:
+            Chem.SanitizeMol(mol_no_h)
+            logger.info("Molecule is valid after hydrogen removal")
+        except Exception as e:
+            logger.warning(f"Sanitization warning after hydrogen removal: {e}")
+            # Try to fix any issues
+            try:
+                Chem.SanitizeMol(mol_no_h, sanitizeOps=Chem.SANITIZE_ALL ^ Chem.SANITIZE_KEKULIZE)
+                logger.info("Molecule sanitized with relaxed options")
+            except Exception as e2:
+                logger.error(f"Failed to sanitize molecule after hydrogen removal: {e2}")
+        
+        return mol_no_h
 
     def generate_3d_conformer(self, cc: ChemicalComponent) -> ChemicalComponent:
         mol = cc.rdkit_mol
@@ -527,25 +638,50 @@ class CustomResidueProcessor:
 
             logger.info("Attempting ETKDG conformer generation...")
             try:
-                conf_id = AllChem.EmbedMolecule(mol, randomSeed=42, useExpTorsionAnglePrefs=True, useBasicKnowledge=True)
-                if conf_id < 0:
-                    raise ValueError("Standard embedding failed")
-                logger.info(f"Successfully generated conformer with ID: {conf_id}")
+                # Generate multiple conformers like the original
+                num_conformers = 10  # Match the original
+                
+                # Use ETKDGv3 with custom parameters for phosphorylated residues
+                if cc.resname in ['SEP', 'TPO', 'PTR']:  # Phosphorylated residues
+                    logger.info("Using custom parameters for phosphorylated residue")
+                    # Use more aggressive optimization for phosphorylated residues
+                    conf_ids = AllChem.EmbedMultipleConfs(mol, numConfs=num_conformers, randomSeed=42, 
+                                                         useExpTorsionAnglePrefs=True, useBasicKnowledge=True,
+                                                         maxAttempts=200)  # More attempts for complex molecules
+                else:
+                    conf_ids = AllChem.EmbedMultipleConfs(mol, numConfs=num_conformers, randomSeed=42, 
+                                                         useExpTorsionAnglePrefs=True, useBasicKnowledge=True)
+                
+                if not conf_ids:
+                    raise ValueError("Multiple conformer embedding failed")
+                logger.info(f"Successfully generated {len(conf_ids)} conformers with IDs: {conf_ids}")
             except Exception as e:
                 logger.error(f"Failed ETKDG conformer generation: {e}")
                 raise
 
             logger.info("Optimizing molecule...")
             try:
-                AllChem.MMFFOptimizeMolecule(mol)
-                logger.info("Successfully optimized with MMFF")
+                # Optimize all conformers with better parameters for phosphorylated residues
+                for conf_id in range(mol.GetNumConformers()):
+                    try:
+                        if cc.resname in ['SEP', 'TPO', 'PTR']:  # Phosphorylated residues
+                            # Use more iterations for phosphorylated residues
+                            AllChem.MMFFOptimizeMolecule(mol, confId=conf_id, maxIters=2000)
+                        else:
+                            AllChem.MMFFOptimizeMolecule(mol, confId=conf_id)
+                    except Exception as e:
+                        logger.warning(f"MMFF optimization failed for conformer {conf_id}: {e}, trying UFF...")
+                        try:
+                            if cc.resname in ['SEP', 'TPO', 'PTR']:  # Phosphorylated residues
+                                # Use more iterations for phosphorylated residues
+                                AllChem.UFFOptimizeMolecule(mol, confId=conf_id, maxIters=2000)
+                            else:
+                                AllChem.UFFOptimizeMolecule(mol, confId=conf_id)
+                        except Exception as e2:
+                            logger.warning(f"UFF optimization also failed for conformer {conf_id}: {e2}")
+                logger.info(f"Successfully optimized {mol.GetNumConformers()} conformers")
             except Exception as e:
-                logger.warning(f"MMFF optimization failed: {e}, trying UFF...")
-                try:
-                    AllChem.UFFOptimizeMolecule(mol)
-                    logger.info("Successfully optimized with UFF")
-                except Exception as e2:
-                    logger.warning(f"UFF optimization also failed: {e2}")
+                logger.warning(f"Optimization failed: {e}")
 
             cc.rdkit_mol = mol
             cc.smiles_exh, cc.atom_name = get_smiles_with_atom_names(mol)
@@ -587,7 +723,7 @@ class CustomResidueProcessor:
                     logger.error(f"Basic embedding traceback: {traceback.format_exc()}")
         
         # After conformer generation, reassign atom names and check again
-        self.reassign_atom_names(cc.rdkit_mol)
+        self.reassign_atom_names(cc.rdkit_mol, resname=cc.resname)
         self.check_atom_ids(cc.rdkit_mol, context='after conformer gen')
         return cc
     
@@ -611,8 +747,6 @@ class CustomResidueProcessor:
         else:
             # Default to unknown token
             residue_type = token_ids.get("UNK", 0)
-        
-        add_geometry_constraints(mol, resname)
        
         # Create atoms list
         atoms = []
@@ -622,12 +756,19 @@ class CustomResidueProcessor:
                 pos = conf.GetAtomPosition(i)
                 
                 
+                # Get leaving atom flag
+                leaving_atom = atom.GetProp('leaving_atom') == '1'
+                
                 parsed_atom = ParsedAtom(
                     name=get_atom_name(atom),
                     coords=(float(pos.x), float(pos.y), float(pos.z)),
                     is_present=True,
                     bfactor=0.0  # Default B-factor
                 )
+                
+                # Add leaving atom property if it exists
+                if hasattr(parsed_atom, 'leaving_atom'):
+                    parsed_atom.leaving_atom = leaving_atom
                 atoms.append(parsed_atom)
         except Exception as e:
             logger.warning(f"Failed to get conformer coordinates: {e}")
@@ -682,10 +823,11 @@ class CustomResidueProcessor:
     
     def save_to_pickle(self, parsed_residue: ParsedResidue, mol_with_constraints, output_path: str):
         """
-        Save ParsedResidue and molecule with geometry constraints to pickle file.
+        Save RDKit molecule with geometry constraints to pickle file.
+        This preserves all atom properties including leaving atom flags.
         
         Args:
-            parsed_residue: ParsedResidue object
+            parsed_residue: ParsedResidue object (not used, kept for compatibility)
             mol_with_constraints: RDKit molecule with geometry constraint properties
             output_path: Output file path
         """
@@ -695,7 +837,7 @@ class CustomResidueProcessor:
         
         with open(output_path, 'wb') as f:
             pickle.dump(mol_with_constraints, f)
-        logger.info(f"Saved molecule with geometry constraints to {output_path}")
+        logger.info(f"Saved RDKit molecule with geometry constraints to {output_path}")
     
     def save_to_sdf(self, mol, output_path: str):
         """
@@ -748,21 +890,33 @@ class CustomResidueProcessor:
         cc = self.rename_backbone_atoms(cc, backbone_type)
         logger.info(f"Renamed backbone atoms")
         
-        # Step 4: Define leaving atoms
-        cc = self.define_leaving_atoms(cc, backbone_type, custom_leaving_atoms, custom_leaving_pattern)
-        logger.info(f"Defined leaving atoms")
+        # Step 4: Remove all explicit hydrogens FIRST to match expected output format
+        cc.rdkit_mol = self.cleanup_hydrogens(cc.rdkit_mol)
+        logger.info(f"Removed hydrogens - molecule now has {cc.rdkit_mol.GetNumAtoms()} atoms")
         
-        # Step 5: Truncate residue (remove leaving atoms)
-        cc = self.truncate_residue(cc, backbone_type, custom_leaving_atoms, custom_leaving_pattern)
-        logger.info(f"Truncated residue")
-        
-        # Step 6: Generate 3D conformer if requested
+        # Step 5: Generate 3D conformer AFTER hydrogen removal to ensure correct atom ordering
         if generate_3d:
             cc = self.generate_3d_conformer(cc)
         
-        # Step 7: Convert to ParsedResidue with geometry constraints
+        # Step 6: Reassign backbone atom names after hydrogen removal to ensure proper naming
+        self.reassign_atom_names(cc.rdkit_mol, backbone_type, resname=cc.resname)
+        logger.info(f"Reassigned backbone atom names after hydrogen removal")
+        
+        # Step 7: Ensure stereochemistry is properly assigned (CRITICAL for constraint generation)
+        Chem.AssignStereochemistryFrom3D(cc.rdkit_mol)
+        logger.info(f"Assigned stereochemistry from 3D")
+        
+        # Step 8: Add geometry constraints to the clean molecule (after stereochemistry assignment)
+        add_geometry_constraints(cc.rdkit_mol, cc.resname)
+        logger.info(f"Added geometry constraints")
+        
+        # Step 9: Define leaving atoms (mark them after geometry constraints)
+        cc = self.define_leaving_atoms(cc, backbone_type, custom_leaving_atoms, custom_leaving_pattern)
+        logger.info(f"Defined leaving atoms")
+        
+        # Step 10: Convert to ParsedResidue (geometry constraints already added)
         parsed_residue = self.convert_to_parsed_residue(cc)
-        logger.info(f"Converted to ParsedResidue format with geometry constraints")
+        logger.info(f"Converted to ParsedResidue format")
         
         # Print the final SMILES string
         print(f"Final SMILES after processing: {cc.smiles_exh}")
@@ -770,10 +924,10 @@ class CustomResidueProcessor:
         
         print_mol_props(cc.rdkit_mol)
 
-        # Step 8: Save to pickle
+        # Step 11: Save to pickle
         self.save_to_pickle(parsed_residue, cc.rdkit_mol, output_path)
         
-        # Step 9: Save to SDF if requested
+        # Step 12: Save to SDF if requested
         if save_sdf:
             self.save_to_sdf(cc.rdkit_mol, output_path.replace('.pkl', '.sdf'))
         
