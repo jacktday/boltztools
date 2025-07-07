@@ -17,32 +17,7 @@ def orderToBondType(order: str):
     }
     return bondType[order]
 
-def extractConstraints(constraints, key, transpose=False):
-    result = np.array(list(
-        map(
-            lambda obj: getattr(obj, key),
-            constraints
-        )
-    ))
-
-    if transpose:
-        return result.transpose()
-    
-    return result
-
-def addPickledProp(mol, name, value):
-    mol.SetProp(
-        name,
-        pickle.dumps(value).hex()
-    )
-
-def addCIFToCCD(resname, filename = None, boltz_path = Path().home() / '.boltz'):
-    if filename == None:
-        try:
-            filename, _ = urllib.request.urlretrieve(f"https://files.rcsb.org/ligands/download/{resname}.cif")
-            return filename
-        except:
-            raise Exception(f"Can not retrieve {resname} from RCSB!")
+def MolFromCIFFile(filename, resname):
     cif = ReadCif(filename)
 
     if len(cif) < 1:
@@ -109,7 +84,51 @@ def addCIFToCCD(resname, filename = None, boltz_path = Path().home() / '.boltz')
         conformer.SetPositions(np.array(atom_positions))
         rwMol.AddConformer(conformer)
 
-    mol = rdkit.Chem.RemoveHs(rwMol.GetMol())
+    return rwMol.GetMol()
+
+def extractConstraints(constraints, key, transpose=False):
+    result = np.array(list(
+        map(
+            lambda obj: getattr(obj, key),
+            constraints
+        )
+    ))
+
+    if transpose:
+        return result.transpose()
+    
+    return result
+
+def addPickledProp(mol, name, value):
+    mol.SetProp(
+        name,
+        pickle.dumps(value).hex()
+    )
+
+def setPropsFromPDBResidueInfo(mol):
+    for atom in mol.GetAtoms():
+        residueInfo = atom.GetPDBResidueInfo()
+        atom.SetProp("name", residueInfo.GetName())
+        atom.SetIntProp("leaving_atom", 0)
+
+def addCIFToCCD(resname, filename = None, boltz_path = Path().home() / '.boltz'):
+    if filename == None:
+        try:
+            filename, _ = urllib.request.urlretrieve(f"https://files.rcsb.org/ligands/download/{resname}.cif")
+            return filename
+        except:
+            raise Exception(f"Can not retrieve {resname} from RCSB!")
+
+    filepath = Path(filename)
+    suffix = filepath.suffix.lower()
+    if suffix == ".pdb":
+        mol = rdkit.Chem.MolFromPDBFile(filename)
+        setPropsFromPDBResidueInfo(mol)
+    elif suffix == ".cif":
+        mol = MolFromCIFFile(filename, resname)
+    else:
+        raise Exception(f"Unknown file extension {suffix}")
+    mol = rdkit.Chem.RemoveHs(mol)
     mol.UpdatePropertyCache(strict=False)
     rdkit.Chem.SanitizeMol(mol)
     rdkit.Chem.rdmolops.AssignStereochemistryFrom3D(mol)
