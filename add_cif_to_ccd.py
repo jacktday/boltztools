@@ -3,7 +3,7 @@
 import argparse
 from pathlib import Path
 import pickle
-import meeko.chemtempgen
+import chemtempgen
 import rdkit.Chem
 from CifFile import ReadCif
 import numpy as np
