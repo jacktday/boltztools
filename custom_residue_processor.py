@@ -659,30 +659,6 @@ class CustomResidueProcessor:
                 logger.error(f"Failed ETKDG conformer generation: {e}")
                 raise
 
-            logger.info("Optimizing molecule...")
-            try:
-                # Optimize all conformers with better parameters for phosphorylated residues
-                for conf_id in range(mol.GetNumConformers()):
-                    try:
-                        if cc.resname in ['SEP', 'TPO', 'PTR']:  # Phosphorylated residues
-                            # Use more iterations for phosphorylated residues
-                            AllChem.MMFFOptimizeMolecule(mol, confId=conf_id, maxIters=2000)
-                        else:
-                            AllChem.MMFFOptimizeMolecule(mol, confId=conf_id)
-                    except Exception as e:
-                        logger.warning(f"MMFF optimization failed for conformer {conf_id}: {e}, trying UFF...")
-                        try:
-                            if cc.resname in ['SEP', 'TPO', 'PTR']:  # Phosphorylated residues
-                                # Use more iterations for phosphorylated residues
-                                AllChem.UFFOptimizeMolecule(mol, confId=conf_id, maxIters=2000)
-                            else:
-                                AllChem.UFFOptimizeMolecule(mol, confId=conf_id)
-                        except Exception as e2:
-                            logger.warning(f"UFF optimization also failed for conformer {conf_id}: {e2}")
-                logger.info(f"Successfully optimized {mol.GetNumConformers()} conformers")
-            except Exception as e:
-                logger.warning(f"Optimization failed: {e}")
-
             cc.rdkit_mol = mol
             cc.smiles_exh, cc.atom_name = get_smiles_with_atom_names(mol)
             logger.info(f"Successfully generated 3D conformer for {cc.resname}")
