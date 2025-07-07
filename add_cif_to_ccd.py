@@ -3,7 +3,7 @@
 import argparse
 from pathlib import Path
 import pickle
-import meeko.chemtempgen
+import urllib.request
 import rdkit.Chem
 from CifFile import ReadCif
 import numpy as np
@@ -38,7 +38,11 @@ def addPickledProp(mol, name, value):
 
 def addCIFToCCD(resname, filename = None, boltz_path = Path().home() / '.boltz'):
     if filename == None:
-        filename = meeko.chemtempgen.fetch_from_pdb(resname)
+        try:
+            filename, _ = urllib.request.urlretrieve(f"https://files.rcsb.org/ligands/download/{resname}.cif")
+            return filename
+        except:
+            raise Exception(f"Can not retrieve {resname} from RCSB!")
     cif = ReadCif(filename)
 
     if len(cif) < 1:
