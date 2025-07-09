@@ -114,35 +114,15 @@ def add_geometry_constraints(mol, resname=None):
         
         # Add chiral constraints using Boltz's exact pattern
         if hasattr(parsed_residue_with_constraints, 'chiral_atom_constraints') and parsed_residue_with_constraints.chiral_atom_constraints:
-            chiral_atom_index = extract_constraints(parsed_residue_with_constraints.chiral_atom_constraints, 'atom_idxs', transpose=True)
-            chiral_atom_is_r = extract_constraints(parsed_residue_with_constraints.chiral_atom_constraints, 'is_r')
-            chiral_atom_is_reference = extract_constraints(parsed_residue_with_constraints.chiral_atom_constraints, 'is_reference')
-            
-            set_pickled_prop(mol, 'chiral_atom_index', chiral_atom_index)
-            set_pickled_prop(mol, 'chiral_atom_is_r', chiral_atom_is_r)
-            set_pickled_prop(mol, 'chiral_atom_is_reference', chiral_atom_is_reference)
-            
-            # Generate orientations and check mask from the constraint data
-            if len(chiral_atom_index) > 0:
-                # Use 1D arrays to match original format
-                chiral_atom_orientations = np.array([False])  # Single False value
-                chiral_check_mask = np.array([True])  # Single True value
-                set_pickled_prop(mol, 'chiral_atom_orientations', chiral_atom_orientations)
-                set_pickled_prop(mol, 'chiral_check_mask', chiral_check_mask)
-                logger.info(f"Generated chiral orientations and check mask for {len(chiral_atom_index)} chiral centers")
-            
-            logger.info("Used constraint parsing for chiral centers")
+            set_pickled_prop(mol, 'chiral_atom_index', extract_constraints(parsed_residue_with_constraints.chiral_atom_constraints, 'atom_idxs', transpose=True))
+            set_pickled_prop(mol, 'chiral_check_mask', extract_constraints(parsed_residue_with_constraints.chiral_atom_constraints, 'is_reference'))
+            set_pickled_prop(mol, 'chiral_atom_orientations', extract_constraints(parsed_residue_with_constraints.chiral_atom_constraints, 'is_r'))
         
         # Add stereo bond constraints using Boltz's exact pattern
         if hasattr(parsed_residue_with_constraints, 'stereo_bond_constraints') and parsed_residue_with_constraints.stereo_bond_constraints:
-            stereo_bond_index = extract_constraints(parsed_residue_with_constraints.stereo_bond_constraints, 'atom_idxs', transpose=True)
-            stereo_bond_is_check = extract_constraints(parsed_residue_with_constraints.stereo_bond_constraints, 'is_check')
-            stereo_bond_is_e = extract_constraints(parsed_residue_with_constraints.stereo_bond_constraints, 'is_e')
-            
-            set_pickled_prop(mol, 'stereo_bond_index', stereo_bond_index)
-            set_pickled_prop(mol, 'stereo_check_mask', stereo_bond_is_check)
-            set_pickled_prop(mol, 'stereo_bond_orientations', stereo_bond_is_e)
-            logger.info(f"Added {len(parsed_residue_with_constraints.stereo_bond_constraints)} stereo bond constraints")
+            set_pickled_prop(mol, 'stereo_bond_index', extract_constraints(parsed_residue_with_constraints.stereo_bond_constraints, 'atom_idxs', transpose=True))
+            set_pickled_prop(mol, 'stereo_check_mask', extract_constraints(parsed_residue_with_constraints.stereo_bond_constraints, 'is_check'))
+            set_pickled_prop(mol, 'stereo_bond_orientations', extract_constraints(parsed_residue_with_constraints.stereo_bond_constraints, 'is_e'))
         
         # Add planar constraints using Boltz's exact pattern
         if hasattr(parsed_residue_with_constraints, 'planar_ring_5_constraints') and parsed_residue_with_constraints.planar_ring_5_constraints:
@@ -224,7 +204,11 @@ def print_mol_props(mol):
         'pb_bond_mask',
         'pb_angle_mask',
         'chiral_atom_index',
+        'chiral_check_mask',
+        'chiral_atom_orientations',
         'stereo_bond_index',
+        'stereo_check_mask',
+        'stereo_bond_orientations',
         'aromatic_5_ring_index',
         'aromatic_6_ring_index',
         'planar_double_bond_index',
@@ -344,7 +328,14 @@ class CustomResidueProcessor:
         
         return ChemicalComponent(mol, resname, smiles_exh, atom_names)
     
-    def get_backbone(self, cc: ChemicalComponent, backbone_type: str = None) -> tuple[str, Chem.Mol]:
+    def get_backbone(
+            self,
+            cc: ChemicalComponent,
+            backbone_type: str = None,
+            custom_backbone_smarts: Optional[str] = None,
+            custom_backbone_atom_names: Optional[list[str]] = None,
+            custom_backbone_leaving_atoms: Optional[list[str]] = None,
+        ) -> tuple[str, Chem.Mol]:
         """
         Identify if the molecule has protein or nucleic acid backbone patterns.
         
@@ -359,7 +350,7 @@ class CustomResidueProcessor:
             if backbone_type not in self.backbone_patterns:
                 raise Exception("Backbone type does not exist!")
             
-            return backbone_type. self.backbone_patterns[backbone_type]
+            return backbone_type, self.backbone_patterns[backbone_type]
         
         mol = cc.rdkit_mol
         
@@ -367,8 +358,19 @@ class CustomResidueProcessor:
         for backbone_type, backbone in self.backbone_patterns.items():
             if mol.GetSubstructMatch(backbone):
                 return backbone_type, backbone
+
+        if backbone_type == None:
+            backbone_type = "unknown"
         
-        return "unknown", None
+        if custom_backbone_smarts:
+            backbone = backbone_from_smarts(
+                custom_backbone_smarts,
+                custom_backbone_atom_names,
+                custom_backbone_leaving_atoms
+            )
+            return backbone_type, backbone
+        
+        return backbone_type, None
 
     
     def add_backbone_props_to_atoms(self, cc: ChemicalComponent, backbone_type: str, backbone: Chem.Mol) -> ChemicalComponent:
@@ -763,8 +765,9 @@ class CustomResidueProcessor:
     
     def process_custom_residue(self, smiles: str, resname: str, output_path: str,
                              backbone_type: Optional[str] = None,
-                             custom_leaving_atoms: Optional[Set[str]] = None,
-                             custom_leaving_pattern: Optional[Dict[str, Set[int]]] = None,
+                             custom_backbone_smarts: Optional[str] = None,
+                             custom_backbone_atom_names: Optional[list[str]] = None,
+                             custom_backbone_leaving_atoms: Optional[list[str]] = None,
                              generate_3d: bool = True,
                              save_pdb: bool = False) -> ParsedResidue:
         """
@@ -790,7 +793,13 @@ class CustomResidueProcessor:
         logger.info(f"Created molecule with {cc.rdkit_mol.GetNumAtoms()} atoms")
         
         # Step 2: Identify backbone type if not specified
-        backbone_type, backbone = self.get_backbone(cc, backbone_type)
+        backbone_type, backbone = self.get_backbone(
+            cc,
+            backbone_type,
+            custom_backbone_smarts,
+            custom_backbone_atom_names,
+            custom_backbone_leaving_atoms
+        )
         logger.info(f"Identified backbone type: {backbone_type}")
         
         # Step 3: Rename backbone atoms
@@ -845,12 +854,14 @@ def main():
     parser.add_argument("-o", "--output", required=True, help="Output pickle file path")
     parser.add_argument("-b", "--backbone-type", choices=["protein", "nucleic_acid", "custom"], 
                        help="Backbone type (auto-detected if not specified)")
-    parser.add_argument("-l", "--leaving-atoms", nargs="+", help="Custom leaving atom names")
+    parser.add_argument("--backbone-smarts", help="Custom backbone smarts")
+    parser.add_argument("--atom-names", nargs="+", help="Custom atom names")
+    parser.add_argument("--leaving-atoms", nargs="+", help="Custom leaving atom names")
     parser.add_argument("--no-3d", action="store_true", help="Skip 3D conformer generation")
     parser.add_argument("--save-pdb", action="store_true", help="Save processed molecule as PDB file")
     
     args = parser.parse_args()
-    
+
     # Initialize processor
     processor = CustomResidueProcessor()
     
@@ -861,7 +872,9 @@ def main():
             resname=args.name,
             output_path=args.output,
             backbone_type=args.backbone_type,
-            custom_leaving_atoms=set(args.leaving_atoms) if args.leaving_atoms else None,
+            custom_backbone_smarts=set(args.backbone_smarts) if args.backbone_smarts else None,
+            custom_backbone_atom_names=set(args.atom_names) if args.atom_names else None,
+            custom_backbone_leaving_atoms=set(args.leaving_atoms) if args.leaving_atoms else None,
             generate_3d=not args.no_3d,
             save_pdb=args.save_pdb
         )
