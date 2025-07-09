@@ -9,6 +9,8 @@ import pickle
 import numpy as np
 import argparse
 from CifFile import ReadCif
+import yaml
+import copy
 
 def extractConstraints(constraints, key, transpose=False):
     result = np.array(list(
@@ -70,19 +72,16 @@ default_backbones = {
     ),
 }
 
-def getBackbone(mol: Chem.Mol, backbone: Chem.Mol | None):
-    if backbone:
-        return backbone, mol.GetSubstructMatch(backbone)
-    
-    for backbone in default_backbones.values():
+def getBackbone(mol: Chem.Mol, backbones: list[Chem.Mol]):
+    for backbone in backbones.values():
         indicies = mol.GetSubstructMatch(backbone)
         if indicies:
             return backbone, indicies
 
     return None, None
 
-def addBackboneProps(mol: Chem.Mol, backbone: Chem.Mol | None, props: set[str] = set(["name", "leaving_atom"])):
-    backbone, indices = getBackbone(mol, backbone)
+def addBackboneProps(mol: Chem.Mol, backbones: list[Chem.Mol], props: set[str] = set(["name", "leaving_atom"])):
+    backbone, indices = getBackbone(mol, backbones)
 
     if not backbone:
         return
@@ -220,7 +219,7 @@ def boltzMolFromCIF(resname: str, filename: str | Path) -> Chem.Mol:
     addBoltzParams(resname, mol, mmcif_with_constraints_parse_ccd_residue)
     return mol
 
-def boltzMolFromSmiles(resname: str, smiles: str, backbone: Chem.Mol) -> Chem.Mol:
+def boltzMolFromSmiles(resname: str, smiles: str, backbones: list[Chem.Mol]) -> Chem.Mol:
     mol = AllChem.MolFromSmiles(smiles)
     mol = AllChem.AddHs(mol)
 
@@ -235,12 +234,12 @@ def boltzMolFromSmiles(resname: str, smiles: str, backbone: Chem.Mol) -> Chem.Mo
 
     AllChem.UFFOptimizeMolecule(mol, confId=conf_id, maxIters=1000)
 
-    addBackboneProps(mol, backbone)
+    addBackboneProps(mol, backbones)
     mol = AllChem.RemoveHs(mol, sanitize=False)
     addBoltzParams(resname, mol, schema_parse_ccd_residue)
     return mol
 
-def boltzMolFromPDB(resname: str, filename: str | Path, backbone: Chem.Mol) -> Chem.Mol:
+def boltzMolFromPDB(resname: str, filename: str | Path, backbones: list[Chem.Mol]) -> Chem.Mol:
     mol = Chem.MolFromPDBFile(filename)
 
     for atom in mol.GetAtoms():
@@ -261,7 +260,7 @@ def boltzMolFromPDB(resname: str, filename: str | Path, backbone: Chem.Mol) -> C
 
     AllChem.UFFOptimizeMolecule(mol, confId=conf_id, maxIters=1000)
 
-    addBackboneProps(mol, backbone)
+    addBackboneProps(mol, backbones)
     mol = AllChem.RemoveHs(mol, sanitize=False)
     addBoltzParams(resname, mol, schema_parse_ccd_residue)
     return mol
@@ -307,8 +306,24 @@ def main():
     parser.add_argument("-n", "--name", required=True, type=validate_name, help="Name of molecule can not exceed 5 characters")
     parser.add_argument("-i", "--input", help="CIF or PDB file containing molecule to add to boltz's CCD")
     parser.add_argument("-s", "--smiles", help="SMILES to add to boltz's CCD")
+    parser.add_argument("--backbones_filter", action="extend", nargs="+", help="Explicitly include a subset of backbones by name")
+    parser.add_argument("--backbones", help="YAML specifying backbones smarts, atom_names and leaving_atoms")
     parser.add_argument("-b", "--boltz_path", default=Path().home() / '.boltz', help="Path to boltz directory")
     args = parser.parse_args()
+
+    backbones = copy.copy(default_backbones)
+    if args.backbones:
+        with open(args.backbones) as f:
+            backbone_templates = yaml.safe_load(f)
+        for backbone_name, backbone_template in backbone_templates.items():
+            backbones[backbone_name] = backbone_from_smarts(
+                backbone_template["smarts"],
+                backbone_template["atom_names"],
+                backbone_template["leaving_atoms"],
+            )
+
+    if args.backbones_filter:
+        backbones = {backbone_name: backbones[backbone_name] for backbone_name in args.backbones_filter if backbone_name in backbones}
 
     mol = None
     if args.input:
@@ -318,11 +333,11 @@ def main():
             case ".cif":
                 mol = boltzMolFromCIF(args.name, args.input)
             case ".pdb":
-                mol = boltzMolFromPDB(args.name, args.input, None)
+                mol = boltzMolFromPDB(args.name, args.input, backbones)
             case _:
                 raise Exception("Input has an unsupported file extension!")
     elif args.smiles:
-        mol = boltzMolFromSmiles(args.name, args.smiles, None)
+        mol = boltzMolFromSmiles(args.name, args.smiles, backbones)
     else:
         raise Exception("No input or smiles provided!")
 

@@ -1,0 +1,12 @@
+protein:
+  smarts: "[NX3][CX4][CX3](=O)[O]"
+  atom_names: ["N", "CA", "C", "O", "CB"]
+  leaving_atoms: ["CB"]
+RNA:
+  smarts: "[O][PX4](=O)([O])[OX2][CX4][CX4]([OX2]1)[CX4]([OX2])[CX4]([OX2])[CX4]1"
+  atom_names: ["OP1", "P", "OP3", "OP2", "O5'", "C5'", "C4'", "O4'", "C3'", "O3'", "C2'", "O2'", "C1'"]
+  leaving_atoms: ["OP1"]
+DNA:
+  smarts: "[O][PX4](=O)([O])[OX2][CX4][CX4]([OX2]1)[CX4]([OX2])[CX4][CX4]1"
+  atom_names: ["OPt1", "P", "OP3", "OP2", "O5'", "C5'", "C4'", "O4'", "C3'", "O3'", "C2'", "C1'"]
+  leaving_atoms: ["OP1"]
