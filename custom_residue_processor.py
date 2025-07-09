@@ -34,6 +34,8 @@ except ImportError:
 # Import RDKit
 from rdkit import Chem
 from rdkit.Chem import AllChem
+import rdkit
+rdkit.log_handler.setLevel(5)
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -579,11 +581,11 @@ class CustomResidueProcessor:
                 if cc.resname in ['SEP', 'TPO', 'PTR']:  # Phosphorylated residues
                     logger.info("Using custom parameters for phosphorylated residue")
                     # Use more aggressive optimization for phosphorylated residues
-                    conf_ids = AllChem.EmbedMultipleConfs(mol, numConfs=num_conformers, randomSeed=42, 
+                    conf_ids = AllChem.EmbedMultipleConfs(mol, numConfs=num_conformers, randomSeed=42, useRandomCoords=True,
                                                          useExpTorsionAnglePrefs=True, useBasicKnowledge=True,
                                                          maxAttempts=200)  # More attempts for complex molecules
                 else:
-                    conf_ids = AllChem.EmbedMultipleConfs(mol, numConfs=num_conformers, randomSeed=42, 
+                    conf_ids = AllChem.EmbedMultipleConfs(mol, numConfs=num_conformers, randomSeed=42, useRandomCoords=True,
                                                          useExpTorsionAnglePrefs=True, useBasicKnowledge=True)
                 
                 if not conf_ids:
@@ -605,7 +607,7 @@ class CustomResidueProcessor:
             # Try alternative embedding method
             try:
                 logger.info("Trying alternative embedding method...")
-                conf_id = AllChem.EmbedMolecule(mol, randomSeed=42, useExpTorsionAnglePrefs=True, useBasicKnowledge=True)
+                conf_id = AllChem.EmbedMolecule(mol, randomSeed=42, useRandomCoords=True, useExpTorsionAnglePrefs=True, useBasicKnowledge=True)
                 if conf_id < 0:
                     raise ValueError("Alternative embedding failed")
                 AllChem.UFFOptimizeMolecule(mol)
