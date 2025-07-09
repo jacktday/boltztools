@@ -8,5 +8,5 @@ RNA:
   leaving_atoms: ["OP1"]
 DNA:
   smarts: "[O][PX4](=O)([O])[OX2][CX4][CX4]([OX2]1)[CX4]([OX2])[CX4][CX4]1"
-  atom_names: ["OPt1", "P", "OP3", "OP2", "O5'", "C5'", "C4'", "O4'", "C3'", "O3'", "C2'", "C1'"]
+  atom_names: ["OP1", "P", "OP3", "OP2", "O5'", "C5'", "C4'", "O4'", "C3'", "O3'", "C2'", "C1'"]
   leaving_atoms: ["OP1"]
