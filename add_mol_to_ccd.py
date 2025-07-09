@@ -308,6 +308,7 @@ def main():
     parser.add_argument("-s", "--smiles", help="SMILES to add to boltz's CCD")
     parser.add_argument("--backbones_filter", action="extend", nargs="+", help="Explicitly include a subset of backbones by name")
     parser.add_argument("--backbones", help="YAML specifying backbones smarts, atom_names and leaving_atoms")
+    parser.add_argument("--save_pdb", help="Save pdb to path specified")
     parser.add_argument("-b", "--boltz_path", default=Path().home() / '.boltz', help="Path to boltz directory")
     args = parser.parse_args()
 
@@ -340,6 +341,9 @@ def main():
         mol = boltzMolFromSmiles(args.name, args.smiles, backbones)
     else:
         raise Exception("No input or smiles provided!")
+
+    if args.save_pdb:
+        Chem.MolToPDBFile(mol, str(Path(args.save_pdb) / f"{args.name}.pdb"))
 
     saveBoltzMol(mol, Path(args.boltz_path) / "mols" / f"{args.name}.pkl")
 
