@@ -31,17 +31,6 @@ except ImportError:
     from boltz.data.parse.schema import parse_ccd_residue as parse_ccd_residue_with_constraints
     from boltz.data.const import token_ids
 
-# Try to import chemtempgen with fallbacks
-try:
-    # First try meeko.chemtempgen
-    from meeko.chemtempgen import ChemicalComponent, ChemicalComponent_LoggingControler
-except ImportError:
-    try:
-        # Then try local chemtempgen.py
-        from chemtempgen import ChemicalComponent, ChemicalComponent_LoggingControler
-    except ImportError:
-        raise ImportError("Could not import chemtempgen. Please install meeko or ensure chemtempgen.py is in the current directory.")
-
 # Import RDKit
 from rdkit import Chem
 from rdkit.Chem import AllChem
@@ -50,6 +39,12 @@ from rdkit.Chem import AllChem
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+class ChemicalComponent:
+    def __init__(self, rdkit_mol: Chem.Mol, resname: str, smiles_exh: str, atom_names: list[str]):
+        self.rdkit_mol = rdkit_mol
+        self.resname = resname
+        self.smiles_exh = smiles_exh
+        self.atom_names = atom_names
 
 def extract_constraints(constraints, key, transpose=False):
     """Extract constraint data from constraint objects."""
@@ -248,6 +243,19 @@ def get_atom_name(atom):
     # If no property found, use atom symbol + index
     return f"{atom.GetSymbol()}{atom.GetIdx()+1}"
 
+def backbone_from_smarts(smarts: str, atom_names: list[str | None], leaving_atoms: set[str]):
+    mol = Chem.MolFromSmarts(smarts)
+
+    if mol.GetNumAtoms() != len(atom_names):
+        raise Exception("Backbone atom names do not match smarts!")
+    
+    for atom_name, atom in zip(atom_names, mol.GetAtoms()):
+        if atom_name:
+            atom.SetProp("name", atom_name)
+        
+        atom.SetIntProp("leaving_atom", int(atom_name in leaving_atoms))
+
+    return mol
 
 
 
@@ -259,72 +267,47 @@ class CustomResidueProcessor:
     def __init__(self):
         """Initialize the processor with default settings."""
         self.backbone_patterns = {
-            "protein": {
-                "smarts": "[NX3][CX4][CX3](=O)",
-                "atom_names": ["N", "CA", "C", "O"],
-                "leaving_atoms": set(),  # Don't remove by atom names - too broad
-                "leaving_pattern": {"[NX3][CX4][CX3](=O)[O]": {4}}  # Match protein backbone, remove terminal O
-            },
-            "nucleic_acid": {
-                "smarts": "[O][PX4](=O)([O])[OX2][CX4][CX4]1[OX2][CX4][CX4][CX4]1[OX2][H]",
-                "atom_names": ["P", "OP1", "OP2", "O5'", "C5'", "C4'", "O4'", "C3'", "O3'", "C2'", "O2'", "C1'"],
-                "leaving_atoms": set(),  # Don't remove by atom names - too broad
-                "leaving_pattern": {
-                    "[O][PX4](=O)([O])[OX2][CX4]": {0},  # Remove first O from phosphate
-                    "[CX4]1[OX2][CX4][CX4][CX4]1[OX2][H]": {6}  # Remove terminal OH from sugar
-                }
-            }
+            "protein": backbone_from_smarts(
+                "[NX3][CX4][CX3](=O)[O]",
+                ["N", "CA", "C", "O", "CB"],
+                set(["CB"])
+            ),
+            "nucleic_acid": backbone_from_smarts(
+                "[O][PX4](=O)([O])[OX2][CX4][CX4]([OX2]1)[CX4]([OX2])[CX4]([OX2])[CX4]1",
+                ["OP1", "P", "OP3", "OP2", "O5'", "C5'", "C4'", "O4'", "C3'", "O3'", "C2'", "O2'", "C1'"],
+                set(["OP1"])
+            )
         }
 
-    def get_backbone_atom_names(self, mol, backbone_type):
-        if not backbone_type:
+        for backbone_type, backbone in self.backbone_patterns.items():
+            print(f"{backbone_type}: {Chem.MolToSmiles(backbone)}")
+
+    def add_props_from_backbone(self, mol: Chem.Mol, backbone: Chem.Mol, props: set[str] = set(["name", "leaving_atom"])):
+        if not backbone:
             return {}
 
-        if backbone_type not in self.backbone_patterns:
-            return {}
-        
-        backbone = self.backbone_patterns[backbone_type]
-        indices = mol.GetSubstructMatch(Chem.MolFromSmarts(backbone["smarts"]))
-        
-        # For protein backbone, we only want the first 4 atoms (N, CA, C, O)
-        # The SMARTS pattern might match additional atoms, so we limit to the expected number
-        if backbone_type == "protein" and len(indices) > len(backbone["atom_names"]):
-            indices = indices[:len(backbone["atom_names"])]
-        
-        return dict(zip(indices, backbone["atom_names"]))
+        indices = mol.GetSubstructMatch(backbone)
+        for atom_idx, backbone_atom in zip(indices, backbone.GetAtoms()):
+            mol_atom = mol.GetAtomWithIdx(atom_idx)
 
-    def reassign_atom_names(self, mol, backbone_type=None, resname=None):
-        """Ensure all atoms have 'atom_id' and 'name' properties set."""
+            if backbone_atom.HasProp("name"):
+                residueInfo = mol_atom.GetPDBResidueInfo() or Chem.AtomPDBResidueInfo()
+                residueInfo.SetName(backbone_atom.GetProp("name"))
+                mol_atom.SetPDBResidueInfo(residueInfo)
         
-        # Use pattern-based assignment for all backbone types
-        atom_names = self.get_backbone_atom_names(mol, backbone_type)
-        
+            for prop in props:
+                if not backbone_atom.HasProp(prop):
+                    continue
+
+                value = backbone_atom.GetProp(prop)
+                mol_atom.SetProp(prop, value)
+
+    def reassign_atom_names(self, mol):
+        """Ensure all atoms have 'atom_id' propertie set."""
         for i, atom in enumerate(mol.GetAtoms()):
-            atom_name = atom_names.get(i, None)
-            if atom_name:
-                atom.SetProp('name', atom_name)
-                atom.SetProp('alt_name', atom_name)
-            else:
-                # For non-backbone atoms, use a more descriptive naming scheme
-                symbol = atom.GetSymbol()
-                if symbol == 'H':
-                    atom.SetProp('name', f"H{atom.GetIdx()+1}")
-                    atom.SetProp('alt_name', f"H{atom.GetIdx()+1}")
-                elif symbol == 'O' and atom.GetTotalNumHs() == 1:  # Terminal OH
-                    atom.SetProp('name', f"O{atom.GetIdx()+1}")
-                    atom.SetProp('alt_name', f"O{atom.GetIdx()+1}")
-                elif symbol == 'P':
-                    atom.SetProp('name', 'P')
-                    atom.SetProp('alt_name', 'P')
-                else:
-                    atom.SetProp('name', f"{symbol}{atom.GetIdx()+1}")
-                    atom.SetProp('alt_name', f"{symbol}{atom.GetIdx()+1}")
-            
             atom.SetProp('atom_id', f"{atom.GetSymbol()}{i+1}")
-            atom.SetProp('leaving_atom', '0')  # Default to 0, will be updated later
-
-
-
+            if not atom.HasProp('leaving_atom'):
+                atom.SetProp('leaving_atom', '0')  # Default to 0, will be updated later
     
     def create_molecule_from_smiles(self, smiles: str, resname: str) -> ChemicalComponent:
         """
@@ -356,12 +339,12 @@ class CustomResidueProcessor:
         smiles_exh = Chem.MolToSmiles(mol, allHsExplicit=True)
         
         # Generate atom names (simple sequential naming)
-        self.reassign_atom_names(mol, resname=resname)
+        self.reassign_atom_names(mol)
         atom_names = list(map(get_atom_name, mol.GetAtoms()))
         
         return ChemicalComponent(mol, resname, smiles_exh, atom_names)
     
-    def identify_backbone_type(self, cc: ChemicalComponent) -> str:
+    def get_backbone(self, cc: ChemicalComponent, backbone_type: str = None) -> tuple[str, Chem.Mol]:
         """
         Identify if the molecule has protein or nucleic acid backbone patterns.
         
@@ -371,19 +354,24 @@ class CustomResidueProcessor:
         Returns:
             String indicating backbone type ("protein", "nucleic_acid", or "custom")
         """
+
+        if backbone_type:
+            if backbone_type not in self.backbone_patterns:
+                raise Exception("Backbone type does not exist!")
+            
+            return backbone_type. self.backbone_patterns[backbone_type]
         
         mol = cc.rdkit_mol
         
         # Check for protein backbone first (prioritize protein over nucleic acid)
-        for backbone_type, backbone_pattern in self.backbone_patterns.items():
-            if mol.GetSubstructMatch(Chem.MolFromSmarts(backbone_pattern["smarts"])):
-                return backbone_type
+        for backbone_type, backbone in self.backbone_patterns.items():
+            if mol.GetSubstructMatch(backbone):
+                return backbone_type, backbone
         
-        return "custom"
-    
+        return "unknown", None
 
     
-    def rename_backbone_atoms(self, cc: ChemicalComponent, backbone_type: str) -> ChemicalComponent:
+    def add_backbone_props_to_atoms(self, cc: ChemicalComponent, backbone_type: str, backbone: Chem.Mol) -> ChemicalComponent:
         """
         Rename backbone atoms to match standard Boltz naming conventions.
         
@@ -413,78 +401,15 @@ class CustomResidueProcessor:
         rwmol = Chem.RWMol(mol)
         
         # Rename atoms to standard names
-        self.reassign_atom_names(rwmol, backbone_type, resname=cc.resname)
+        self.add_props_from_backbone(rwmol, backbone)
         
         # Update the ChemicalComponent
         cc.rdkit_mol = rwmol.GetMol()
-        cc.smiles_exh, cc.atom_name = get_smiles_with_atom_names(cc.rdkit_mol)
-        
-        return cc
-    
-    def define_leaving_atoms(self, cc: ChemicalComponent, backbone_type: str, 
-                           custom_leaving_atoms: Optional[Set[str]] = None,
-                           custom_leaving_pattern: Optional[Dict[str, Set[int]]] = None) -> ChemicalComponent:
-        """
-        Define leaving atoms for polymer connectivity.
-        
-        Args:
-            cc: ChemicalComponent object
-            backbone_type: Type of backbone
-            custom_leaving_atoms: Custom set of leaving atom names
-            custom_leaving_pattern: Custom leaving atom patterns
-            
-        Returns:
-            Modified ChemicalComponent with leaving atoms defined
-        """
-        if backbone_type in self.backbone_patterns:
-            pattern_info = self.backbone_patterns[backbone_type]
-            leaving_atoms = custom_leaving_atoms or pattern_info["leaving_atoms"]
-            leaving_pattern = custom_leaving_pattern or pattern_info["leaving_pattern"]
-        else:
-            leaving_atoms = custom_leaving_atoms or set()
-            leaving_pattern = custom_leaving_pattern or {}
-        
-        # Mark leaving atoms in the molecule
-        mol = cc.rdkit_mol
-        
-        # Initialize all atoms as non-leaving
-        for atom in mol.GetAtoms():
-            atom.SetProp('pdbx_leaving_atom_flag', 'N')
-            atom.SetProp('leaving_atom', '0')
-        
-        # Mark atoms by name if specified
-        for atom in mol.GetAtoms():
-            atom_name = get_atom_name(atom)
-            if atom_name in leaving_atoms:
-                atom.SetProp('pdbx_leaving_atom_flag', 'Y')
-                atom.SetProp('leaving_atom', '1')
-                logger.info(f"Marked atom {atom_name} as leaving atom by name")
-        
-        # Mark atoms by SMARTS pattern
-        for smarts_pattern, atom_indices in leaving_pattern.items():
-            pattern_mol = Chem.MolFromSmarts(smarts_pattern)
-            if pattern_mol is None:
-                logger.warning(f"Invalid SMARTS pattern: {smarts_pattern}")
-                continue
-                
-            matches = mol.GetSubstructMatches(pattern_mol)
-            logger.info(f"SMARTS pattern '{smarts_pattern}' found {len(matches)} matches")
-            
-            for match in matches:
-                for atom_idx in atom_indices:
-                    if atom_idx < len(match):
-                        atom = mol.GetAtomWithIdx(match[atom_idx])
-                        atom_name = get_atom_name(atom)
-                        atom.SetProp('pdbx_leaving_atom_flag', 'Y')
-                        atom.SetProp('leaving_atom', '1')
-                        
-                        logger.info(f"Marked atom {atom_name} (idx {match[atom_idx]}) as leaving atom by SMARTS pattern")
+        cc.smiles_exh, cc.atom_names = get_smiles_with_atom_names(cc.rdkit_mol)
         
         return cc
 
-    def truncate_residue(self, cc: ChemicalComponent, backbone_type: str,
-                         custom_leaving_atoms: Optional[Set[str]] = None,
-                         custom_leaving_pattern: Optional[Dict[str, Set[int]]] = None) -> ChemicalComponent:
+    def truncate_residue(self, cc: ChemicalComponent) -> ChemicalComponent:
         """
         Truncate the residue by removing leaving atoms.
         
@@ -506,24 +431,31 @@ class CustomResidueProcessor:
         rings_before = mol_before.GetRingInfo().NumRings()
         logger.info(f"Before truncation: {rings_before} rings")
         
-        if backbone_type in self.backbone_patterns:
-            pattern_info = self.backbone_patterns[backbone_type]
-            allowed_smarts = pattern_info["smarts"]
-            leaving_atoms = custom_leaving_atoms or pattern_info["leaving_atoms"]
-            leaving_pattern = custom_leaving_pattern or pattern_info["leaving_pattern"]
-        else:
-            # For custom backbones, use the entire molecule as allowed pattern
-            allowed_smarts = Chem.MolToSmarts(cc.rdkit_mol)
-            leaving_atoms = custom_leaving_atoms or set()
-            leaving_pattern = custom_leaving_pattern or {}
-        
         # Truncate the residue
-        with ChemicalComponent_LoggingControler():
-            cc = cc.make_embedded(
-                allowed_smarts=allowed_smarts,
-                leaving_names=leaving_atoms,
-                leaving_smarts_loc=leaving_pattern
-            )
+        rwmol = Chem.RWMol(cc.rdkit_mol)
+
+        leaving_atoms = set()
+        for atom in rwmol.GetAtoms():
+            if not atom.HasProp("leaving_atom"):
+                continue
+
+            if not atom.GetIntProp("leaving_atom"):
+                continue
+
+            leaving_atoms.add(atom)
+
+            for neighbor in atom.GetNeighbors():
+                if neighbor.GetAtomicNum() != 1:
+                    continue
+
+                leaving_atoms.add(neighbor)
+        
+        for atom in leaving_atoms:
+            rwmol.RemoveAtom(atom.GetIdx())
+
+        rwmol.UpdatePropertyCache()
+
+        cc.rdkit_mol = rwmol.GetMol()
         
         # Debug: Check molecule after truncation
         mol_after = cc.rdkit_mol
@@ -552,7 +484,7 @@ class CustomResidueProcessor:
             logger.warning(f"After truncation: Found {len(problematic_atoms)} atoms marked aromatic but not in rings: {problematic_atoms}")
         
         # After truncation, reassign atom names with backbone type
-        self.reassign_atom_names(cc.rdkit_mol, backbone_type, resname=cc.resname)
+        self.reassign_atom_names(cc.rdkit_mol)
         
         return cc
     
@@ -660,7 +592,7 @@ class CustomResidueProcessor:
                 raise
 
             cc.rdkit_mol = mol
-            cc.smiles_exh, cc.atom_name = get_smiles_with_atom_names(mol)
+            cc.smiles_exh, cc.atom_names = get_smiles_with_atom_names(mol)
             logger.info(f"Successfully generated 3D conformer for {cc.resname}")
             
         except Exception as e:
@@ -676,7 +608,7 @@ class CustomResidueProcessor:
                     raise ValueError("Alternative embedding failed")
                 AllChem.UFFOptimizeMolecule(mol)
                 cc.rdkit_mol = mol
-                cc.smiles_exh, cc.atom_name = get_smiles_with_atom_names(mol)
+                cc.smiles_exh, cc.atom_names = get_smiles_with_atom_names(mol)
                 logger.info(f"Generated 3D conformer with alternative method for {cc.resname}")
             except Exception as e2:
                 logger.error(f"All 3D conformer generation methods failed: {e2}")
@@ -690,7 +622,7 @@ class CustomResidueProcessor:
                     if conf_id >= 0:
                         logger.info(f"Generated basic 3D conformer for {cc.resname}")
                         cc.rdkit_mol = mol
-                        cc.smiles_exh, cc.atom_name = get_smiles_with_atom_names(mol)
+                        cc.smiles_exh, cc.atom_names = get_smiles_with_atom_names(mol)
                     else:
                         logger.error("All conformer generation methods failed")
                 except Exception as e3:
@@ -699,7 +631,7 @@ class CustomResidueProcessor:
                     logger.error(f"Basic embedding traceback: {traceback.format_exc()}")
         
         # After conformer generation, reassign atom names and check again
-        self.reassign_atom_names(cc.rdkit_mol, resname=cc.resname)
+        self.reassign_atom_names(cc.rdkit_mol)
         self.check_atom_ids(cc.rdkit_mol, context='after conformer gen')
         return cc
     
@@ -815,7 +747,7 @@ class CustomResidueProcessor:
             pickle.dump(mol_with_constraints, f)
         logger.info(f"Saved RDKit molecule with geometry constraints to {output_path}")
     
-    def save_to_sdf(self, mol, output_path: str):
+    def save_to_pdb(self, mol, output_path: str | Path):
         """
         Save molecule to SDF file for visualization and checking.
         
@@ -824,7 +756,7 @@ class CustomResidueProcessor:
             output_path: Output SDF file path
         """
         try:
-            Chem.MolToMolFile(mol, output_path)
+            Chem.MolToPDBFile(mol, output_path)
             logger.info(f"Saved molecule to SDF file: {output_path}")
         except Exception as e:
             logger.warning(f"Failed to save SDF file: {e}")
@@ -834,7 +766,7 @@ class CustomResidueProcessor:
                              custom_leaving_atoms: Optional[Set[str]] = None,
                              custom_leaving_pattern: Optional[Dict[str, Set[int]]] = None,
                              generate_3d: bool = True,
-                             save_sdf: bool = False) -> ParsedResidue:
+                             save_pdb: bool = False) -> ParsedResidue:
         """
         Complete pipeline to process custom residue from SMILES to Boltz format.
         
@@ -846,7 +778,7 @@ class CustomResidueProcessor:
             custom_leaving_atoms: Custom leaving atom names
             custom_leaving_pattern: Custom leaving atom patterns
             generate_3d: Whether to generate 3D conformer
-            save_sdf: Whether to save the processed molecule as an SDF file
+            save_pdb: Whether to save the processed molecule as an PDB file
             
         Returns:
             ParsedResidue object
@@ -858,24 +790,23 @@ class CustomResidueProcessor:
         logger.info(f"Created molecule with {cc.rdkit_mol.GetNumAtoms()} atoms")
         
         # Step 2: Identify backbone type if not specified
-        if backbone_type is None:
-            backbone_type = self.identify_backbone_type(cc)
-            logger.info(f"Identified backbone type: {backbone_type}")
+        backbone_type, backbone = self.get_backbone(cc, backbone_type)
+        logger.info(f"Identified backbone type: {backbone_type}")
         
         # Step 3: Rename backbone atoms
-        cc = self.rename_backbone_atoms(cc, backbone_type)
-        logger.info(f"Renamed backbone atoms")
+        cc = self.add_backbone_props_to_atoms(cc, backbone_type, backbone)
+        logger.info(f"Added backbone properties to atoms")
         
         # Step 4: Remove all explicit hydrogens FIRST to match expected output format
         cc.rdkit_mol = self.cleanup_hydrogens(cc.rdkit_mol)
         logger.info(f"Removed hydrogens - molecule now has {cc.rdkit_mol.GetNumAtoms()} atoms")
         
-        # Step 5: Generate 3D conformer AFTER hydrogen removal to ensure correct atom ordering
+        # Step 5: Generate 3D conformer if requested
         if generate_3d:
             cc = self.generate_3d_conformer(cc)
         
         # Step 6: Reassign backbone atom names after hydrogen removal to ensure proper naming
-        self.reassign_atom_names(cc.rdkit_mol, backbone_type, resname=cc.resname)
+        self.reassign_atom_names(cc.rdkit_mol)
         logger.info(f"Reassigned backbone atom names after hydrogen removal")
         
         # Step 7: Ensure stereochemistry is properly assigned (CRITICAL for constraint generation)
@@ -886,11 +817,7 @@ class CustomResidueProcessor:
         add_geometry_constraints(cc.rdkit_mol, cc.resname)
         logger.info(f"Added geometry constraints")
         
-        # Step 9: Define leaving atoms (mark them after geometry constraints)
-        cc = self.define_leaving_atoms(cc, backbone_type, custom_leaving_atoms, custom_leaving_pattern)
-        logger.info(f"Defined leaving atoms")
-        
-        # Step 10: Convert to ParsedResidue (geometry constraints already added)
+        # Step 9: Convert to ParsedResidue (geometry constraints already added)
         parsed_residue = self.convert_to_parsed_residue(cc)
         logger.info(f"Converted to ParsedResidue format")
         
@@ -903,9 +830,9 @@ class CustomResidueProcessor:
         # Step 11: Save to pickle
         self.save_to_pickle(parsed_residue, cc.rdkit_mol, output_path)
         
-        # Step 12: Save to SDF if requested
-        if save_sdf:
-            self.save_to_sdf(cc.rdkit_mol, output_path.replace('.pkl', '.sdf'))
+        # Step 9: Save to PDB if requested
+        if save_pdb:
+            self.save_to_pdb(cc.rdkit_mol, Path(output_path).with_suffix(".pdb"))
         
         return parsed_residue
 
@@ -920,7 +847,7 @@ def main():
                        help="Backbone type (auto-detected if not specified)")
     parser.add_argument("-l", "--leaving-atoms", nargs="+", help="Custom leaving atom names")
     parser.add_argument("--no-3d", action="store_true", help="Skip 3D conformer generation")
-    parser.add_argument("--save-sdf", action="store_true", help="Save processed molecule as SDF file")
+    parser.add_argument("--save-pdb", action="store_true", help="Save processed molecule as PDB file")
     
     args = parser.parse_args()
     
@@ -936,7 +863,7 @@ def main():
             backbone_type=args.backbone_type,
             custom_leaving_atoms=set(args.leaving_atoms) if args.leaving_atoms else None,
             generate_3d=not args.no_3d,
-            save_sdf=args.save_sdf
+            save_pdb=args.save_pdb
         )
         
         print(f"Successfully processed {args.name} residue!")
