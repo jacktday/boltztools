@@ -57,18 +57,18 @@ def backbone_from_smarts(smarts: str, atom_names: list[str | None], leaving_atom
 default_backbones = {
     "protein": backbone_from_smarts(
         "[NX3][CX4][CX3](=O)[O]",
-        ["N", "CA", "C", "O", "CB"],
-        set(["CB"])
+        ["N", "CA", "C", "O", "OXT"],
+        set(["OXT"])
     ),
     "RNA": backbone_from_smarts(
         "[O][PX4](=O)([O])[OX2][CX4][CX4]([OX2]1)[CX4]([OX2])[CX4]([OX2])[CX4]1",
-        ["OP1", "P", "OP3", "OP2", "O5'", "C5'", "C4'", "O4'", "C3'", "O3'", "C2'", "O2'", "C1'"],
-        set(["OP1"])
+        ["OP3", "P", "OP1", "OP2", "O5'", "C5'", "C4'", "O4'", "C3'", "O3'", "C2'", "O2'", "C1'"],
+        set(["OP3"])
     ),
     "DNA": backbone_from_smarts(
         "[O][PX4](=O)([O])[OX2][CX4][CX4]([OX2]1)[CX4]([OX2])[CX4][CX4]1",
-        ["OP1", "P", "OP3", "OP2", "O5'", "C5'", "C4'", "O4'", "C3'", "O3'", "C2'", "C1'"],
-        set(["OP1"])
+        ["OP3", "P", "OP1", "OP2", "O5'", "C5'", "C4'", "O4'", "C3'", "O3'", "C2'", "C1'"],
+        set(["OP3"])
     ),
 }
 
