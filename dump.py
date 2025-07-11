@@ -9,6 +9,9 @@ import rdkit.Chem
 import pandas as pd
 import argparse
 import boltz.data.types
+import torch
+from boltz.data.module.inferencev2 import PredictionDataset
+from boltz.data.types import Manifest
 
 def get_paths(project: Path, file: Path, output: Path, suffix: str = None):
     output_path = output / file.relative_to(project).with_suffix(suffix or "")
@@ -30,10 +33,14 @@ def dump_json(project: Path, file: Path, output: Path):
 def dump_np_dict(np_dict: np.array, output_path: Path):
     output_path.mkdir(parents=True, exist_ok=True)
     for key, value in np_dict.items():
+        if type(value) not in [np.ndarray, torch.Tensor]:
+            print(f"Skipping: {key} {type(value)}")
+            continue
+        
         output_file = output_path / f"{key}.csv"
         print(f"Generating: {output_file}")
         df = None
-        if value.dtype.names:
+        if hasattr(value.dtype, "names") and value.dtype.names:
             df = pd.DataFrame.from_records(value.tolist(), columns=value.dtype.names)
         else:
             df = pd.DataFrame(value.tolist())
@@ -141,14 +148,34 @@ def dump_npz(project: Path, file: Path, output: Path):
         output_path
     )
 
+def dump_features(project: Path, output: Path, boltz_path = Path().home() / '.boltz'):
+    processed = project / "processed"
+    dataset = PredictionDataset(
+        Manifest.load(processed / "manifest.json"),
+        processed / "structures",
+        processed / "msa",
+        Path(boltz_path) / "mols",
+        processed / "constraints",
+        processed / "templates",
+        processed / "mols",
+    )
 
-def dump_project(project: Path, output: Path):
+    for features in dataset:
+        output_path = output / processed.relative_to(project) / "features" / features["record"].id
+        output_path.mkdir(parents=True, exist_ok=True)
+        dump_np_dict(
+            features,
+            output_path
+        )
+
+def dump_project(project: Path, output: Path, boltz_path = Path().home() / '.boltz'):
     for file in project.rglob("*.json"):
         dump_json(project, file, output)
     for file in project.rglob("*.pkl"):
         dump_pkl(project, file, output)
     for file in project.rglob("*.npz"):
         dump_npz(project, file, output)
+    dump_features(project, output, boltz_path)
 
 def main():
     parser = argparse.ArgumentParser()
@@ -162,11 +189,11 @@ def main():
         parser.print_help()
         exit()
 
+    boltz_path = Path(args.boltz_path)
     if args.project:
         project = Path(args.project)
-        dump_project(project, Path(args.output or f"{project.stem}_dump"))
+        dump_project(project, Path(args.output or f"{project.stem}_dump"), boltz_path)
     
-    boltz_path = Path(args.boltz_path)
     mols_path = boltz_path / "mols"
     if args.ccd:
         dump_pkl(mols_path, mols_path / f"{args.ccd}.pkl", Path(args.output or f"{args.ccd}_dump"))
