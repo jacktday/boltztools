@@ -88,14 +88,54 @@ def getBackbone(mol: Chem.Mol, backbones: list[Chem.Mol]):
 
     return None, None
 
-def addBackboneProps(mol: Chem.Mol, backbones: list[Chem.Mol], props: set[str] = set(["name", "leaving_atom", "idx"])):
+def addBackboneProps(mol: Chem.Mol, backbones: list[Chem.Mol], props: set[str] = set(["name", "leaving_atom", "idx"])) -> Chem.Mol:
     backbone, indices = getBackbone(mol, backbones)
 
     if not backbone:
-        return
-    
+        return mol
+
+    start_atoms = {}
+    other_atoms = []
+    end_atoms = {}
+
+    for atom_idx, atom in zip(indices, backbone.GetAtoms()):
+        if not atom.HasProp("idx"):
+            continue
+
+        new_idx = atom.GetIntProp("idx")
+        if new_idx >= 0:
+            start_atoms[new_idx] = atom_idx
+        else:
+            end_atoms[new_idx] = atom_idx
+
+    parsed_atoms = [*start_atoms.values(), *end_atoms.values()]
+
+    for atom in mol.GetAtoms():
+        atom_idx = atom.GetIdx()
+
+        if atom_idx in parsed_atoms:
+            continue
+
+        other_atoms.append(atom_idx)
+
+    new_atom_order = list(itertools.chain(
+        map(operator.itemgetter(1), sorted(start_atoms.items())),
+        other_atoms,
+        map(operator.itemgetter(1), sorted(end_atoms.items()))
+    ))
+    print(new_atom_order)
+
+    mol = Chem.RenumberAtoms(mol, new_atom_order)
+
+    new_atom_map = {key: value for value, key in enumerate(new_atom_order)}
+
+    new_indices = [new_atom_map[idx] for idx in indices]
+
+    print(indices)
+    print(new_indices)
+
     backbone_atom: Chem.Atom
-    for atom_idx, backbone_atom in zip(indices, backbone.GetAtoms()):
+    for atom_idx, backbone_atom in zip(new_indices, backbone.GetAtoms()):
         mol_atom = mol.GetAtomWithIdx(atom_idx)
 
         if backbone_atom.HasProp("name"):
@@ -109,33 +149,11 @@ def addBackboneProps(mol: Chem.Mol, backbones: list[Chem.Mol], props: set[str] =
 
             value = backbone_atom.GetProp(prop)
             mol_atom.SetProp(prop, value)
-            
-def renumberAtoms(mol: Chem.Mol) -> Chem.Mol:
-    start_atoms = {}
-    other_atoms = []
-    end_atoms = {}
 
-    for atom in mol.GetAtoms():
-        if not atom.HasProp("idx"):
-            other_atoms.append(atom.GetIdx())
-            continue
-
-        idx = atom.GetIntProp("idx")
-        if idx >= 0:
-            start_atoms[idx] = atom.GetIdx()
-        else:
-            end_atoms[idx] = atom.GetIdx()
-    
-    new_atom_order = list(itertools.chain(
-        map(operator.itemgetter(1), sorted(start_atoms.items())),
-        other_atoms,
-        map(operator.itemgetter(1), sorted(end_atoms.items()))
-    ))
-
-    return Chem.RenumberAtoms(mol, new_atom_order)
+    return mol
 
 def addBoltzParams(resname: str, mol: Chem.Mol, parse_ccd_residue):
-    # Add missing atom names
+    # Add missing props (name, leaving_atom)
     atom: Chem.Atom
     for atom in mol.GetAtoms():
         atom_name = f"{atom.GetSymbol()}{atom.GetIdx() + 1}"
@@ -146,6 +164,8 @@ def addBoltzParams(resname: str, mol: Chem.Mol, parse_ccd_residue):
         residueInfo = atom.GetPDBResidueInfo() or Chem.AtomPDBResidueInfo()
         residueInfo.SetName(atom_name)
         atom.SetPDBResidueInfo(residueInfo)
+        if not atom.HasProp("leaving_atom"):
+            atom.SetIntProp("leaving_atom", 0)
 
     parsedResidue = parse_ccd_residue(
         name=resname,
@@ -266,9 +286,8 @@ def boltzMolFromSmiles(resname: str, smiles: str, backbones: list[Chem.Mol]) -> 
 
     AllChem.UFFOptimizeMolecule(mol, confId=conf_id, maxIters=1000)
 
-    addBackboneProps(mol, backbones)
+    mol = addBackboneProps(mol, backbones)
     mol = AllChem.RemoveHs(mol, sanitize=False)
-    mol = renumberAtoms(mol)
     addBoltzParams(resname, mol, schema_parse_ccd_residue)
     return mol
 
@@ -293,9 +312,8 @@ def boltzMolFromPDB(resname: str, filename: str | Path, backbones: list[Chem.Mol
 
     AllChem.UFFOptimizeMolecule(mol, confId=conf_id, maxIters=1000)
 
-    addBackboneProps(mol, backbones)
+    mol = addBackboneProps(mol, backbones)
     mol = AllChem.RemoveHs(mol, sanitize=False)
-    mol = renumberAtoms(mol)
     addBoltzParams(resname, mol, schema_parse_ccd_residue)
     return mol
 
