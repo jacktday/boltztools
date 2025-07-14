@@ -1,3 +1,6 @@
+> [!WARNING]
+> This does not work for polymer residues as Boltz 2 tokenizes residues by residue rather than atom. This causes the model to lose information about bonds in the residue.
+
 ## Introduction
 
 Boltz-2 currently restricts constraints to CCD molecules. This repository provides tools that enable users to add custom molecules to the CCD, allowing constraints on arbitrary molecules.
