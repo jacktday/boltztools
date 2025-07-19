@@ -26,7 +26,7 @@ Specify boltz path manually if you have moved ~/.boltz
 ```
 
 ## Example view.py
-This tool opens and aligns cifs from multiple pymol batches.
+This tool opens and aligns cifs from multiple boltz batches.
 
 Opening boltz_results_batch_A_01, boltz_results_batch_A_02, and boltz_results_batch_B_05.
 

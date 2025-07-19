@@ -7,7 +7,7 @@ from pymol import cmd
 
 def script(args):
     first_target_record_id = None
-    for batch_index, batch in enumerate([batch for batch_pattern in args.batches for batch in Path().glob(f"boltz_results_{batch_pattern}")]):
+    for batch_index, batch in enumerate([batch for batch_pattern in args.batches for batch in sorted(Path().glob(f"boltz_results_{batch_pattern}"))]):
         batch_predictions = batch / "predictions"
         for target_index, target in enumerate(batch_predictions.rglob("*_model_0.cif")):
             target_record_id = target.parts[-2]
