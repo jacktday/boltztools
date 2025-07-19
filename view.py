@@ -5,30 +5,40 @@ from pathlib import Path
 import pymol
 from pymol import cmd
 
+def display_models(models: dict[str, Path], reference: str = None):
+    hide_models = reference is not None
+
+    if reference is None:
+        reference = next(iter(models), None)
+
+    for model_index, (model_name, model) in enumerate(models.items()):
+        cmd.load(
+            model,
+            model_name
+        )
+        if hide_models or model_index > 0:
+            cmd.align(model_name, reference)
+            cmd.disable(model_name)
+
+    return reference
+
 def script(args):
-    first_target_record_id = None
-    for batch_index, batch in enumerate([batch for batch_pattern in args.batches for batch in sorted(Path().glob(f"boltz_results_{batch_pattern}"))]):
-        batch_predictions = batch / "predictions"
-        for target_index, target in enumerate(batch_predictions.rglob("*_model_0.cif")):
-            target_record_id = target.parts[-2]
+    reference = display_models({reference.stem: reference for reference in map(Path, args.references or [])})
+    for batch_pattern in args.batches:
+        for batch in sorted(Path().glob(f"boltz_results_{batch_pattern}")):
+            batch_predictions = batch / "predictions"
+            targets = {target.stem: target for target in sorted(batch_predictions.rglob("*.cif"))}
+            reference = display_models(targets, reference=reference)
 
-            if first_target_record_id is None:
-                first_target_record_id = target_record_id
-
-            cmd.load(
-                target,
-                target_record_id
-            )
-            if batch_index > 0 or target_index > 0:
-                cmd.align(target_record_id, first_target_record_id)
-                cmd.disable(target_record_id)
 
 def main(args):
     pymol.launch(["-l", __file__, "--",
+                  *(["-r", *args.references] if args.references else []),
                   *(["-b", *args.batches] if args.batches else [])
     ])
 
 parser = argparse.ArgumentParser()
+parser.add_argument("-r", "--references", nargs="+", action="extend", help="Reference model files (pdb, cif, etc.)")
 parser.add_argument("-b", "--batches", nargs="+", action="extend", help="List of batches to open")
 args = parser.parse_args()
 

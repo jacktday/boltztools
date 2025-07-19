@@ -40,6 +40,12 @@ Using patterns to avoid fully specifying the name.
 ./view.py -b batch_A_\* batch_B_05
 ```
 
+Add a reference structures (cif, pdb, etc.).
+
+```
+./view.py -r 9ccd_A.cif 9ccd_B.cif -b batch_A_\* batch_B_05
+```
+
 ## Examples dump.py
 
 Dumping boltz_results_stuff to boltz_results_stuff_dump.
