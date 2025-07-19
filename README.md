@@ -25,6 +25,21 @@ Specify boltz path manually if you have moved ~/.boltz
 ./add_cif_to_ccd.py -n CLA --boltz_path /opt/boltz
 ```
 
+## Example view.py
+This tool opens and aligns cifs from multiple pymol batches.
+
+Opening boltz_results_batch_A_01, boltz_results_batch_A_02, and boltz_results_batch_B_05.
+
+```
+./view.py -b batch_A_01 batch_A_02 batch_B_05
+```
+
+Using patterns to avoid fully specifying the name.
+
+```
+./view.py -b batch_A_\* batch_B_05
+```
+
 ## Examples dump.py
 
 Dumping boltz_results_stuff to boltz_results_stuff_dump.
