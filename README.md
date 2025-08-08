@@ -1,28 +1,28 @@
 > [!WARNING]
-> This does not work for polymer residues as Boltz 2 tokenizes residues by residue rather than atom. This causes the model to lose information about bonds in the residue.
+> Boltz 2 tokenizes residues at the residue level. This means Boltz 2 does not know about intramolecular bonds. As a result Boltz 2 relies on accurate atom naming of residues to infer bonding. This means any modified residue must conform to the atom naming of the base residue in the ccd. It also likely restricts the complexity of modified residues. Boltz 1 does not appear to have this limitation.
 
 ## Introduction
 
-Boltz-2 currently restricts constraints to CCD molecules. This repository provides tools that enable users to add custom molecules to the CCD, allowing constraints on arbitrary molecules.
+This repository provides tools that enable users to add custom molecules to the CCD. This allows the user to specify atom names and leaving atom flags. Leaving atom flags are not supported for pdb inputs.
 
-## Examples add_cif_to_ccd.py
+## Examples add_mol_to_ccd.py
 
 Adding CCD from rcsb. The CIF will be automatically downloaded from rcsb. Note name must not exceed 5 characters.
 
 ```
-./add_cif_to_ccd.py -n CLA
+./add_mol_to_ccd.py -n CLA
 ```
 
-Adding custom CIF.
+Adding custom CIF or PDB.
 
 ```
-./add_cif_to_ccd.py -n MLE -i MLE.cif
+./add_mol_to_ccd.py -n MLE -i MLE.cif
 ```
 
 Specify boltz path manually if you have moved ~/.boltz
 
 ```
-./add_cif_to_ccd.py -n CLA --boltz_path /opt/boltz
+./add_mol_to_ccd.py -n CLA --boltz_path /opt/boltz
 ```
 
 ## Example view.py

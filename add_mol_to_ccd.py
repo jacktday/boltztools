@@ -111,23 +111,10 @@ def setPropsFromPDBResidueInfo(mol):
         atom.SetProp("name", residueInfo.GetName())
         atom.SetIntProp("leaving_atom", 0)
 
-def addCIFToCCD(resname, filename = None, boltz_path = Path().home() / '.boltz'):
-    if filename == None:
-        try:
-            filename, _ = urllib.request.urlretrieve(f"https://files.rcsb.org/ligands/download/{resname}.cif")
-            return filename
-        except:
-            raise Exception(f"Can not retrieve {resname} from RCSB!")
+def addMolToCCD(resname: str, mol: rdkit.Chem.Mol, boltz_path = Path().home() / '.boltz'):
+    if mol is None:
+        raise Exception("Mol can not be null")
 
-    filepath = Path(filename)
-    suffix = filepath.suffix.lower()
-    if suffix == ".pdb":
-        mol = rdkit.Chem.MolFromPDBFile(filename)
-        setPropsFromPDBResidueInfo(mol)
-    elif suffix == ".cif":
-        mol = MolFromCIFFile(filename, resname)
-    else:
-        raise Exception(f"Unknown file extension {suffix}")
     mol = rdkit.Chem.RemoveHs(mol)
     mol.UpdatePropertyCache(strict=False)
     rdkit.Chem.SanitizeMol(mol)
@@ -154,6 +141,29 @@ def addCIFToCCD(resname, filename = None, boltz_path = Path().home() / '.boltz')
     rdkit.Chem.SetDefaultPickleProperties(rdkit.Chem.PropertyPickleOptions.AllProps)
     with open(Path(boltz_path) / 'mols' / f'{resname}.pkl', 'wb') as f:
         pickle.dump(mol, f)
+
+def addCIFToCCD(resname: str, filename = None, boltz_path = Path().home() / '.boltz'):
+    if filename is None:
+        try:
+            filename, _ = urllib.request.urlretrieve(f"https://files.rcsb.org/ligands/download/{resname}.cif")
+            return filename
+        except:
+            raise Exception(f"Can not retrieve {resname} from RCSB!")
+
+    filepath = Path(filename)
+    suffix = filepath.suffix.lower()
+    if suffix == ".pdb":
+        mol = rdkit.Chem.MolFromPDBFile(filename)
+        setPropsFromPDBResidueInfo(mol)
+    elif suffix == ".cif":
+        mol = MolFromCIFFile(filename, resname)
+    else:
+        raise Exception(f"Unknown file extension {suffix}")
+    
+    if mol is None:
+        raise Exception("Unknown error: Failed to load mol")
+    
+    addMolToCCD(resname, mol, boltz_path)
 
 def validate_name(name):
     if len(name) < 1:
