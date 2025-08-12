@@ -5,6 +5,8 @@ from pathlib import Path
 import pickle
 import urllib.request
 import rdkit.Chem
+import rdkit.Chem.AllChem
+import rdkit.Chem.Draw
 from CifFile import ReadCif
 import numpy as np
 from boltz.data.parse.mmcif_with_constraints import parse_ccd_residue
@@ -142,23 +144,46 @@ def addMolToCCD(resname: str, mol: rdkit.Chem.Mol, boltz_path = Path().home() / 
     with open(Path(boltz_path) / 'mols' / f'{resname}.pkl', 'wb') as f:
         pickle.dump(mol, f)
 
-def addCIFToCCD(resname: str, filename = None, boltz_path = Path().home() / '.boltz'):
-    if filename is None:
+def addCIFToCCD(resname: str, filename = None, smiles = None, leaving_atoms = [], boltz_path = Path().home() / '.boltz'):
+    if smiles is None and filename is None:
         try:
             filename, _ = urllib.request.urlretrieve(f"https://files.rcsb.org/ligands/download/{resname}.cif")
             return filename
         except:
             raise Exception(f"Can not retrieve {resname} from RCSB!")
 
-    filepath = Path(filename)
-    suffix = filepath.suffix.lower()
-    if suffix == ".pdb":
-        mol = rdkit.Chem.MolFromPDBFile(filename)
-        setPropsFromPDBResidueInfo(mol)
-    elif suffix == ".cif":
-        mol = MolFromCIFFile(filename, resname)
-    else:
-        raise Exception(f"Unknown file extension {suffix}")
+    if filename:
+        filepath = Path(filename)
+        suffix = filepath.suffix.lower()
+        if suffix == ".pdb":
+            mol = rdkit.Chem.MolFromPDBFile(filename)
+            setPropsFromPDBResidueInfo(mol)
+        elif suffix == ".cif":
+            mol = MolFromCIFFile(filename, resname)
+        else:
+            raise Exception(f"Unknown file extension {suffix}")
+    elif smiles:
+        mol = rdkit.Chem.MolFromSmiles(smiles)
+        mol = rdkit.Chem.AllChem.AddHs(mol)
+        etkdgv3 = rdkit.Chem.AllChem.ETKDGv3()
+        etkdgv3.clearConfs = False
+        id = rdkit.Chem.AllChem.EmbedMolecule(mol, etkdgv3)
+        if id == -1:
+            etkdgv3.useRandomCoords = True
+            rdkit.Chem.AllChem.EmbedMolecule(mol, etkdgv3)
+        rdkit.Chem.AllChem.UFFOptimizeMolecule(mol, confId=-1, maxIters=1000)
+        mol = rdkit.Chem.AllChem.RemoveHs(mol)
+        for i, atom in enumerate(mol.GetAtoms()):
+            name = f"{atom.GetSymbol().upper()}{i + 1}"
+            leaving_flag = (i + 1) in leaving_atoms
+            atom.SetProp("name", name)
+            atom.SetProp("atomNote", f"*{name}" if leaving_flag else name)
+            atom.SetProp("leaving_atom", "1" if leaving_flag else "0")
+        draw_options = rdkit.Chem.Draw.MolDrawOptions()
+        draw_options.addStereoAnnotation = True
+        rdkit.Chem.MolToPDBFile(mol, f"{resname}.pdb")
+        img = rdkit.Chem.Draw.MolToImage(mol, size=(750, 750), options=draw_options)
+        img.save(f"{resname}.png")
     
     if mol is None:
         raise Exception("Unknown error: Failed to load mol")
@@ -176,9 +201,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-n", "--name", required=True, type=validate_name, help="Name of molecule can not exceed 5 characters")
     parser.add_argument("-i", "--input", help="CIF file containing molecule to add to boltz's CCD")
+    parser.add_argument("-s", "--smiles", help="Smiles to add to boltz's CCD. This does not currently allow atom name. This means it will NOT work with residues.")
+    parser.add_argument("-l", "--leaving_atoms", nargs="+", type=int, help="Offset of leaving atoms in smiles starting from 1. This only works for smiles.")
     parser.add_argument("-b", "--boltz_path", default=Path().home() / '.boltz', help="Path to boltz directory")
     args = parser.parse_args()
-    addCIFToCCD(args.name, args.input, args.boltz_path)
+    addCIFToCCD(args.name, args.input, args.smiles, args.leaving_atoms or [], args.boltz_path)
 
 if __name__ == '__main__':
     main()
