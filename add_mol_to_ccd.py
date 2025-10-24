@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 import pickle
 import urllib.request
+import warnings
 import rdkit.Chem
 from CifFile import ReadCif
 import numpy as np
@@ -20,6 +21,9 @@ def orderToBondType(order: str):
         return rdkit.Chem.BondType.DOUBLE
     if s.startswith('TRIP') or s == 'TRIPLE':
         return rdkit.Chem.BondType.TRIPLE
+    # Aromatic fix thanks to ctakemoto
+    if s.startswith('AROM'):
+        return rdkit.Chem.BondType.AROMATIC
     # Unknown/unsupported order: warn and fall back to SINGLE
     warnings.warn(f"Unrecognized bond order '{order}' in CIF — falling back to SINGLE")
     return rdkit.Chem.BondType.SINGLE
