@@ -10,22 +10,48 @@ import numpy as np
 from boltz.data.parse.mmcif_with_constraints import parse_ccd_residue
 
 def orderToBondType(order: str):
-    bondType = {
-        'SING': rdkit.Chem.BondType.SINGLE,
-        'DOUB': rdkit.Chem.BondType.DOUBLE,
-        'TRIP': rdkit.Chem.BondType.TRIPLE,
-    }
-    return bondType[order]
+    # Accept common CIF value_order variants like 'SING', 'SINGLE', 'DOUB', 'DOUBLE', 'TRIP', 'TRIPLE'
+    if order is None:
+        return rdkit.Chem.BondType.SINGLE
+    s = str(order).strip().upper()
+    if s.startswith('SING') or s == 'SINGLE':
+        return rdkit.Chem.BondType.SINGLE
+    if s.startswith('DOUB') or s == 'DOUBLE':
+        return rdkit.Chem.BondType.DOUBLE
+    if s.startswith('TRIP') or s == 'TRIPLE':
+        return rdkit.Chem.BondType.TRIPLE
+    # Unknown/unsupported order: warn and fall back to SINGLE
+    warnings.warn(f"Unrecognized bond order '{order}' in CIF — falling back to SINGLE")
+    return rdkit.Chem.BondType.SINGLE
 
 def MolFromCIFFile(filename, resname):
     cif = ReadCif(filename)
 
     if len(cif) < 1:
         raise Exception("CIF does not contain any components!")
-    if len(cif) > 1:
-        raise Exception("CIF may only contain ONE component!")
-    
-    cif_component = cif.first_block()
+        # Prefer a block whose name matches the residue name (e.g. data_comp_NAME)
+    cif_component = None
+    try:
+        keys = list(cif.keys())
+    except Exception:
+        keys = []
+
+    resname_l = resname.lower() if resname is not None else None
+    for k in keys:
+        if resname_l and resname_l in k.lower():
+            cif_component = cif[k]
+            break
+
+    # If no matching block found, pick the first block that isn't a comp_list
+    if cif_component is None:
+        for k in keys:
+            if 'comp_list' not in k.lower():
+                cif_component = cif[k]
+                break
+
+    # Final fallback
+    if cif_component is None:
+        cif_component = cif.first_block()
 
     # Get Atoms
     atom_types = cif_component['_chem_comp_atom.type_symbol']
