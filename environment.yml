@@ -1,0 +1,14 @@
+name: boltz
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - pymol-open-source
+  - scipy=1.13.1
+  - pytorch
+  - numpy=1.26.4
+  - rdkit=2025.9.1
+  - pip
+  - pip:
+    - boltz
+    - pycifrw

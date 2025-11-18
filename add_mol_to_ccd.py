@@ -138,7 +138,7 @@ def addPickledProp(mol, name, value):
 def setPropsFromPDBResidueInfo(mol):
     for atom in mol.GetAtoms():
         residueInfo = atom.GetPDBResidueInfo()
-        atom.SetProp("name", residueInfo.GetName())
+        atom.SetProp("name", residueInfo.GetName().strip().upper())
         atom.SetIntProp("leaving_atom", 0)
 
 def addMolToCCD(resname: str, mol: rdkit.Chem.Mol, boltz_path = Path().home() / '.boltz'):
